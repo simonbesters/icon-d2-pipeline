@@ -184,6 +184,7 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     logger.info("Step 3: Processing timesteps...")
 
     # Cache for hourly loaded fields (to avoid reloading for half-hour interp)
+    # Evict old hours to avoid OOM — keep at most 2 hours in cache
     hourly_cache = {}
     prev_tot_prec = None
 
@@ -229,6 +230,14 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             fields_3d = loaded["3d"]
             pblh = loaded["pblh"]
             z = loaded["z"]
+
+        # Evict old cache entries to limit memory (keep max 2 hours)
+        needed_hours = {fh}
+        if local_min == 30:
+            needed_hours = {fh, fh + 1}
+        for cached_fh in list(hourly_cache.keys()):
+            if cached_fh not in needed_hours:
+                del hourly_cache[cached_fh]
 
         # Construct valid time
         valid_dt = datetime(run_date.year, run_date.month, run_date.day,
@@ -282,9 +291,11 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             # Buoyancy/shear ratio
             results["bsratio"] = calc_bsratio(spd_blavg, wstar)
 
-        # Vertical velocity
+        # Vertical velocity (W is on half-levels, interpolate to full-levels)
         wa = fields_3d.get("W", None)
         if wa is not None:
+            if wa.shape[0] > z.shape[0]:
+                wa = 0.5 * (wa[:-1] + wa[1:])  # half-levels -> full-levels
             results["wblmaxmin"] = calc_wblmaxmin(0, wa, z, ter, pblh)
             results["zwblmaxmin"] = calc_wblmaxmin(1, wa, z, ter, pblh)
 
@@ -515,6 +526,7 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         fields_2d = compute_derived_2d(raw_2d)
 
         # Load 3D fields (icosahedral grid → remap to regular lat-lon)
+        # Remap level-by-level to avoid OOM (full ico array = 2GB per var)
         raw_3d = {}
         for var in GRIB_3D_VARS:
             var_lower = var.lower()
@@ -522,10 +534,13 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                 if remapper is not None:
                     from .config import ICON_D2_NUM_HALF_LEVELS
                     num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
-                    ico_data = load_3d_field_ico(
-                        grib_dir, date_init, fh, var_lower, num_lev)
-                    remapped = remapper.remap_3d(ico_data)
-                    raw_3d[var] = flip_to_bottom_up(remapped)
+                    remapped_levels = []
+                    for level in range(1, num_lev + 1):
+                        filename = f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
+                        filepath = grib_dir / filename
+                        ico_1d = read_grib_ico_field(filepath)
+                        remapped_levels.append(remapper.remap(ico_1d))
+                    raw_3d[var] = flip_to_bottom_up(np.stack(remapped_levels, axis=0))
                 else:
                     logger.debug(f"No remapper — skipping 3D {var}")
             except Exception as e:
