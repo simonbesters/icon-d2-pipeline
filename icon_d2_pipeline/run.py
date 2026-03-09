@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .pipeline import run_pipeline
@@ -47,7 +47,7 @@ def main():
         tz_offset = _detect_tz_offset()
 
     # Use today's date for the model run
-    run_date = datetime.utcnow()
+    run_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
     logger.info(f"ICON-D2 Pipeline Starting")
     logger.info(f"  Init hour: {init_hour}Z")
@@ -75,7 +75,7 @@ def main():
 def _detect_tz_offset() -> int:
     """Detect UTC offset for CET/CEST."""
     now = datetime.now()
-    utcnow = datetime.utcnow()
+    utcnow = datetime.now(timezone.utc).replace(tzinfo=None)
     diff = round((now - utcnow).total_seconds() / 3600)
     return max(1, min(diff, 2))  # Clamp to 1 (CET) or 2 (CEST)
 

@@ -6,7 +6,9 @@ soaring weather pipeline.
 
 import asyncio
 import logging
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -66,6 +68,7 @@ from .fields import (
     load_3d_field_ico,
     load_invariant_field,
     read_grib_field,
+    read_grib_ico_field,
 )
 from .remap import IconRemapper, read_ico_grid_coords
 from .grid import find_bbox_indices, get_grid_info, subset_domain
@@ -526,25 +529,29 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         fields_2d = compute_derived_2d(raw_2d)
 
         # Load 3D fields (icosahedral grid → remap to regular lat-lon)
-        # Remap level-by-level to avoid OOM (full ico array = 2GB per var)
+        # Parallelize level reads+remaps: eccodes and numpy both release the GIL
         raw_3d = {}
-        for var in GRIB_3D_VARS:
-            var_lower = var.lower()
-            try:
-                if remapper is not None:
-                    from .config import ICON_D2_NUM_HALF_LEVELS
-                    num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
-                    remapped_levels = []
-                    for level in range(1, num_lev + 1):
-                        filename = f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
-                        filepath = grib_dir / filename
-                        ico_1d = read_grib_ico_field(filepath)
-                        remapped_levels.append(remapper.remap(ico_1d))
-                    raw_3d[var] = flip_to_bottom_up(np.stack(remapped_levels, axis=0))
-                else:
-                    logger.debug(f"No remapper — skipping 3D {var}")
-            except Exception as e:
-                logger.debug(f"Could not load 3D {var} fh={fh}: {e}")
+        if remapper is not None:
+            from .config import ICON_D2_NUM_HALF_LEVELS
+
+            def _read_and_remap(filepath):
+                ico_1d = read_grib_ico_field(filepath)
+                return remapper.remap(ico_1d)
+
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+                for var in GRIB_3D_VARS:
+                    var_lower = var.lower()
+                    try:
+                        num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
+                        filepaths = [
+                            grib_dir / f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
+                            for level in range(1, num_lev + 1)
+                        ]
+                        futures = [executor.submit(_read_and_remap, fp) for fp in filepaths]
+                        remapped_levels = [f.result() for f in futures]
+                        raw_3d[var] = flip_to_bottom_up(np.stack(remapped_levels, axis=0))
+                    except Exception as e:
+                        logger.warning(f"Could not load 3D {var} fh={fh}: {e}")
 
         # Heights
         if z_full is not None:
