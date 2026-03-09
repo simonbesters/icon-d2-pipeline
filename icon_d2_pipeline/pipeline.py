@@ -8,7 +8,7 @@ import asyncio
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -77,6 +77,28 @@ from .output.geotiff import write_geotiff
 from .output.json_meta import get_json_filename, write_title_json
 
 logger = logging.getLogger(__name__)
+
+# Module-level globals for ProcessPoolExecutor workers
+_worker_weights = None
+_worker_indices = None
+_worker_target_shape = None
+
+
+def _init_worker(weights, indices, target_shape):
+    """Initialize worker process with shared remapper data."""
+    global _worker_weights, _worker_indices, _worker_target_shape
+    _worker_weights = weights
+    _worker_indices = indices
+    _worker_target_shape = target_shape
+
+
+def _read_and_remap(filepath):
+    """Read icosahedral GRIB and remap to regular grid (runs in worker process)."""
+    from .fields import read_grib_ico_field
+    ico_1d = read_grib_ico_field(filepath)
+    neighbor_vals = ico_1d[_worker_indices]
+    result = np.sum(neighbor_vals * _worker_weights, axis=1)
+    return result.reshape(_worker_target_shape).astype(np.float32)
 
 
 def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
@@ -529,29 +551,37 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         fields_2d = compute_derived_2d(raw_2d)
 
         # Load 3D fields (icosahedral grid → remap to regular lat-lon)
-        # Parallelize level reads+remaps: eccodes and numpy both release the GIL
+        # Use ProcessPoolExecutor for true parallelism (eccodes holds GIL)
         raw_3d = {}
         if remapper is not None:
             from .config import ICON_D2_NUM_HALF_LEVELS
 
-            def _read_and_remap(filepath):
-                ico_1d = read_grib_ico_field(filepath)
-                return remapper.remap(ico_1d)
+            # Build all filepaths for all vars at once for maximum parallelism
+            var_level_map = {}
+            all_filepaths = []
+            for var in GRIB_3D_VARS:
+                var_lower = var.lower()
+                num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
+                filepaths = [
+                    grib_dir / f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
+                    for level in range(1, num_lev + 1)
+                ]
+                var_level_map[var] = (len(all_filepaths), len(filepaths))
+                all_filepaths.extend(filepaths)
 
-            with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-                for var in GRIB_3D_VARS:
-                    var_lower = var.lower()
-                    try:
-                        num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
-                        filepaths = [
-                            grib_dir / f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
-                            for level in range(1, num_lev + 1)
-                        ]
-                        futures = [executor.submit(_read_and_remap, fp) for fp in filepaths]
-                        remapped_levels = [f.result() for f in futures]
-                        raw_3d[var] = flip_to_bottom_up(np.stack(remapped_levels, axis=0))
-                    except Exception as e:
-                        logger.warning(f"Could not load 3D {var} fh={fh}: {e}")
+            try:
+                with ProcessPoolExecutor(
+                    max_workers=os.cpu_count(),
+                    initializer=_init_worker,
+                    initargs=(remapper._weights, remapper._indices, remapper._target_shape),
+                ) as executor:
+                    all_results = list(executor.map(_read_and_remap, all_filepaths))
+
+                for var, (start_idx, count) in var_level_map.items():
+                    remapped_levels = all_results[start_idx:start_idx + count]
+                    raw_3d[var] = flip_to_bottom_up(np.stack(remapped_levels, axis=0))
+            except Exception as e:
+                logger.warning(f"Could not load 3D fields for fh={fh}: {e}")
 
         # Heights
         if z_full is not None:
