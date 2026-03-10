@@ -219,11 +219,12 @@ def compute_derived_2d(raw: dict) -> dict:
         derived["sfcdewpt"] = raw["TD_2M"] - T0
 
     # Virtual heat flux (from getvars.ncl:56)
-    # vhf = hfx + 0.000245268 * (tc_sfc + 273.16) * LH
-    # Note: ASHFL_S and ALHFL_S from ICON-D2 are time-mean fluxes (stepType=avg).
-    # De-accumulation to approximate instantaneous values is handled by the pipeline
-    # via prev_hour subtraction. The raw values passed here should already be
-    # instantaneous (or close enough for the current hour).
+    # NCL: vhf = hfx + 0.000245268 * (tc(0,:,:) + 273.16) * LH
+    # where tc(0,:,:) is the lowest model level temperature in Celsius.
+    # We use T_2M (already in Kelvin from ICON-D2) as an equivalent proxy.
+    # The NCL converts Celsius to Kelvin via +273.16; T_2M is already K.
+    # Difference between T_2M and lowest model level T is typically ~0.5-2K
+    # which produces a ~0.1-0.5% change in VHF — acceptable approximation.
     if "ASHFL_S" in raw and "ALHFL_S" in raw and "T_2M" in raw:
         hfx = raw["ASHFL_S"]
         lh = np.maximum(raw["ALHFL_S"], 0.0)

@@ -9,31 +9,28 @@ import numpy as np
 from ..config import GRAVITY
 
 
-def calc_wstar(vhf: np.ndarray, pblh: np.ndarray) -> np.ndarray:
+def calc_wstar(vhf: np.ndarray, pblh: np.ndarray,
+               t_avg: np.ndarray | float = 300.0) -> np.ndarray:
     """Calculate convective velocity scale w* (Deardorff).
 
     w* = (g/T_avg * pblh * vhf)^(1/3)
 
     where vhf is the virtual heat flux (sensible + moisture contribution).
-    Uses a typical BL temperature of ~300K for the scaling.
 
     Args:
         vhf: Virtual heat flux (W/m^2), 2D array.
         pblh: PBL height (m), 2D array.
+        t_avg: BL-averaged temperature in K. Can be a 2D array or scalar
+               (default 300.0 for backward compatibility).
 
     Returns:
         w* in m/s, 2D array. Negative or zero vhf yields 0.
     """
-    # Use a representative BL temperature (~300K)
-    t_avg = 300.0
-
     # Only compute where vhf > 0 (upward flux = convection)
-    wstar = np.zeros_like(vhf)
-    positive = vhf > 0.0
-    wstar[positive] = np.cbrt(
-        (GRAVITY / t_avg) * pblh[positive] * vhf[positive]
-    )
-    return wstar
+    # Use np.where to handle both scalar and array t_avg correctly
+    arg = (GRAVITY / t_avg) * pblh * vhf
+    wstar = np.where(vhf > 0.0, np.cbrt(np.maximum(arg, 0.0)), 0.0)
+    return wstar.astype(np.float32)
 
 
 def calc_hcrit(wstar: np.ndarray, ter: np.ndarray,

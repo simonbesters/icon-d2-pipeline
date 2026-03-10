@@ -90,15 +90,11 @@ def write_data_file(filepath: Path, param_name: str, data: np.ndarray,
 
         if ldatafmt == 2:
             # Float format (for rain)
-            for row in scaled:
-                line = " ".join(f"{v:.1f}" for v in row)
-                f.write(line + "\n")
+            np.savetxt(f, scaled, fmt="%.1f", delimiter=" ")
         else:
             # Integer format (default)
             int_data = np.round(scaled).astype(np.int32)
-            for row in int_data:
-                line = " ".join(str(v) for v in row)
-                f.write(line + "\n")
+            np.savetxt(f, int_data, fmt="%d", delimiter=" ")
 
     logger.debug(f"Wrote {filepath.name}")
 

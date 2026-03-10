@@ -15,7 +15,15 @@ from pathlib import Path
 
 import numpy as np
 
-from ..config import GLIDER_POLARS, PFD_BLUE_THERMAL_MIN_AGL, PFD_CU_CLOUDBASE_MIN_AGL
+from ..config import (
+    GLIDER_POLARS,
+    PFD_BLUE_THERMAL_MIN_AGL,
+    PFD_CU_CLOUDBASE_MIN_AGL,
+    PFD_SIMPLE_A,
+    PFD_SIMPLE_B,
+    PFD_SIMPLE_C,
+    PFD_SIMPLE_SRIT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +78,17 @@ def _read_data_file_float(filepath: Path) -> np.ndarray | None:
 
 
 def compute_pfd_tot(out_dir: Path) -> np.ndarray | None:
-    """Compute simple PFD using LS-4 polar and wstar only.
+    """Compute simple PFD using hardcoded NCL polar coefficients and wstar only.
 
-    Matches the pfd() function in calc_funcs.ncl.
+    Matches the pfd() function in calc_funcs.ncl exactly:
+    - Uses hardcoded polar coefficients (not derived from glider spec)
+    - Uses sink rate = 1.15 m/s (not from glider polar)
+    - No wing-loading adjustment
+    - Closed-form speed-to-fly formula
     """
-    polar = GLIDER_POLARS["LS-4"]
-    aw, bw, cw = _compute_polar_coefficients(polar)
-    srit = polar["sink_rate_turn"]
+    a = PFD_SIMPLE_A
+    b = PFD_SIMPLE_B
+    c = PFD_SIMPLE_C
 
     # Find all wstar data files, sorted by time
     wstar_files = sorted(glob.glob(str(out_dir / "wstar.curr.*lst.d2.data")))
@@ -103,26 +115,18 @@ def compute_pfd_tot(out_dir: Path) -> np.ndarray | None:
             continue
 
         # wstar is in cm/s (metric), convert to m/s and subtract sink rate
-        wssel = wstar / 100.0 - srit
+        wssel = wstar / 100.0 - PFD_SIMPLE_SRIT
         wssel = np.maximum(wssel, 0.0)
 
-        # Speed-to-fly and average cross-country speed
-        # v_cruise = sqrt((cw - Cl) / aw)
-        # sink_cruise = aw * v_cruise^2 + bw * v_cruise + cw
-        # v_avg = v_cruise * Cl / (Cl - sink_cruise) / divisor
-        cl = wssel
-        valid = cl > 0.0
+        # NCL closed-form: dist = (wssel * sqrt((c - wssel) / a)) /
+        #                         (2*wssel - 2*c - b*sqrt((c-wssel)/a)) / divisor
+        sqrt_term = np.sqrt(np.maximum((c - wssel) / a, 0.0))
+        denom = 2.0 * wssel - 2.0 * c - b * sqrt_term
 
-        v_cruise = np.zeros_like(cl)
-        v_cruise[valid] = np.sqrt(np.maximum((cw - cl[valid]) / aw, 0.0))
-
-        sink_cruise = aw * v_cruise**2 + bw * v_cruise + cw
-
-        denom = cl - sink_cruise
-        v_avg = np.zeros_like(cl)
-        nonzero_denom = valid & (np.abs(denom) > 0.01)
-        v_avg[nonzero_denom] = (v_cruise[nonzero_denom] * cl[nonzero_denom] /
-                                denom[nonzero_denom]) / divisor
+        v_avg = np.zeros_like(wssel)
+        valid = (wssel > 0.0) & (np.abs(denom) > 0.01)
+        v_avg[valid] = (wssel[valid] * sqrt_term[valid] /
+                        denom[valid]) / divisor
 
         pfdtot += v_avg
         pfdtot = pfdtot.astype(int).astype(np.float64)  # Truncate as in NCL

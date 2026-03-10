@@ -210,6 +210,18 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     else:
         logger.warning("CLAT/CLON not found — cannot remap icosahedral data")
 
+    # Pre-flip z_full to bottom-up once (avoids redundant flipping per hour)
+    z_bottom_up = flip_to_bottom_up(z_full) if z_full is not None else None
+
+    # Create ProcessPoolExecutor once for all timesteps (avoids per-hour overhead)
+    executor = None
+    if remapper is not None:
+        executor = ProcessPoolExecutor(
+            max_workers=os.cpu_count(),
+            initializer=_init_worker,
+            initargs=(remapper._weights, remapper._indices, remapper._target_shape),
+        )
+
     # ---- Step 3: Process each timestep ----
     logger.info("Step 3: Processing timesteps...")
 
@@ -236,10 +248,10 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
 
             fields_lo = _load_fields_for_hour(
                 grib_dir, date_init, fh_lo, lat_slice, lon_slice,
-                z_full, ter, hourly_cache, remapper)
+                z_bottom_up, ter, hourly_cache, remapper, executor)
             fields_hi = _load_fields_for_hour(
                 grib_dir, date_init, fh_hi, lat_slice, lon_slice,
-                z_full, ter, hourly_cache, remapper)
+                z_bottom_up, ter, hourly_cache, remapper, executor)
 
             if fields_lo is None or fields_hi is None:
                 logger.warning(f"  Skipping {ts_local}: missing data")
@@ -252,7 +264,7 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         else:
             loaded = _load_fields_for_hour(
                 grib_dir, date_init, fh, lat_slice, lon_slice,
-                z_full, ter, hourly_cache, remapper)
+                z_bottom_up, ter, hourly_cache, remapper, executor)
             if loaded is None:
                 logger.warning(f"  Skipping {ts_local}: missing data")
                 continue
@@ -280,12 +292,20 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         results = {}
 
         # Surface params
-        results["sfctemp"] = calc_sfctemp(fields_2d.get("sfctemp", np.zeros((ny, nx))))
-        results["sfcdewpt"] = calc_sfcdewpt(fields_2d.get("sfcdewpt", np.zeros((ny, nx))))
+        nan_default = np.full((ny, nx), np.nan, dtype=np.float32)
+        results["sfctemp"] = calc_sfctemp(fields_2d.get("sfctemp", nan_default.copy()))
+        results["sfcdewpt"] = calc_sfcdewpt(fields_2d.get("sfcdewpt", nan_default.copy()))
 
         # Virtual heat flux and wstar
         vhf = fields_2d.get("vhf", np.zeros((ny, nx)))
-        wstar = calc_wstar(vhf, pblh)
+
+        # Compute BL-averaged temperature for wstar scaling
+        t_3d = fields_3d.get("T", None)
+        if t_3d is not None:
+            t_blavg = calc_blavg(t_3d, z, ter, pblh)
+        else:
+            t_blavg = 300.0
+        wstar = calc_wstar(vhf, pblh, t_blavg)
         results["wstar"] = wstar
         results["wstar175"] = wstar  # Same data, different contour levels
 
@@ -302,8 +322,8 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             results["bltopvariab"] = calc_bltop_pottemp_variability(theta, z, ter, pblh)
 
         # Wind parameters
-        u10m = fields_2d.get("U_10M", np.zeros((ny, nx)))
-        v10m = fields_2d.get("V_10M", np.zeros((ny, nx)))
+        u10m = fields_2d.get("U_10M", nan_default.copy())
+        v10m = fields_2d.get("V_10M", nan_default.copy())
         u_sfc, v_sfc, spd_sfc = calc_sfcwind0(u10m, v10m)
         results["sfcwind0"] = spd_sfc
 
@@ -466,6 +486,10 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
                 write_data_file(out_dir / wspd_filename, f"{param_name}wspd",
                                 wspd, grid_info, valid_dt, forecast_str, init_hour, tz_id)
 
+    # Shutdown ProcessPoolExecutor
+    if executor is not None:
+        executor.shutdown(wait=True)
+
     # ---- Step 4: Compute PFD (reads .data files) ----
     logger.info("Step 4: Computing Potential Flight Distance...")
 
@@ -514,10 +538,11 @@ def _get_param_mult(param_name: str) -> float:
 
 def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                           lat_slice: slice, lon_slice: slice,
-                          z_full: np.ndarray | None,
+                          z_bottom_up: np.ndarray | None,
                           ter: np.ndarray,
                           cache: dict,
-                          remapper: "IconRemapper | None" = None) -> dict | None:
+                          remapper: "IconRemapper | None" = None,
+                          executor: "ProcessPoolExecutor | None" = None) -> dict | None:
     """Load all fields for a given forecast hour, using cache.
 
     Returns dict with keys: '2d', '3d', 'pblh', 'z'
@@ -558,7 +583,7 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         # Load 3D fields (icosahedral grid → remap to regular lat-lon)
         # Use ProcessPoolExecutor for true parallelism (eccodes holds GIL)
         raw_3d = {}
-        if remapper is not None:
+        if remapper is not None and executor is not None:
             from .config import ICON_D2_NUM_HALF_LEVELS
 
             # Build all filepaths for all vars at once for maximum parallelism
@@ -575,12 +600,7 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                 all_filepaths.extend(filepaths)
 
             try:
-                with ProcessPoolExecutor(
-                    max_workers=os.cpu_count(),
-                    initializer=_init_worker,
-                    initargs=(remapper._weights, remapper._indices, remapper._target_shape),
-                ) as executor:
-                    all_results = list(executor.map(_read_and_remap, all_filepaths))
+                all_results = list(executor.map(_read_and_remap, all_filepaths))
 
                 for var, (start_idx, count) in var_level_map.items():
                     remapped_levels = all_results[start_idx:start_idx + count]
@@ -588,9 +608,9 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
             except Exception as e:
                 logger.warning(f"Could not load 3D fields for fh={fh}: {e}")
 
-        # Heights
-        if z_full is not None:
-            z = flip_to_bottom_up(z_full)
+        # Heights (z_bottom_up is pre-flipped before the timestep loop)
+        if z_bottom_up is not None:
+            z = z_bottom_up
         else:
             # Fallback: compute heights from hypsometric equation
             z = _estimate_heights(raw_3d, ter)

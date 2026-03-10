@@ -62,13 +62,27 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
                   np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_angle))
     cos_zenith = np.maximum(cos_zenith, 0.0)  # Sun above horizon
 
-    # Clear-sky radiation (simple model)
-    # Solar constant * cos(zenith) * atmospheric transmittance
+    # Clear-sky radiation using Kasten (1980) formula with water vapor correction
     solar_constant = 1361.0  # W/m^2
-    # Simple clear-sky transmittance (Beer-Lambert with airmass)
     airmass = np.where(cos_zenith > 0.01, 1.0 / cos_zenith, 40.0)
     airmass = np.minimum(airmass, 40.0)
-    transmittance = 0.76 ** airmass  # Empirical clear-sky transmittance
+
+    # Compute precipitable water (PW) from qvapor column if available
+    if qvapor is not None and pmb is not None and z is not None:
+        nz_3d = qvapor.shape[0]
+        # Integrate qvapor through atmosphere: PW = (1/g) * sum(qv * dp)
+        pw = np.zeros_like(ter)
+        for k in range(1, nz_3d):
+            dp = np.abs(pmb[k - 1] - pmb[k]) * 100.0  # hPa -> Pa
+            qv_avg = 0.5 * (qvapor[k - 1] + qvapor[k])
+            pw += qv_avg * dp / 9.81
+        # pw is in kg/m^2 ~ mm
+    else:
+        pw = np.full_like(ter, 15.0)  # Typical mid-latitude PW in mm
+
+    # Kasten clear-sky transmittance with water vapor correction
+    # transmittance = exp(-0.09 * airmass^0.75 * (1 + 0.012 * pw))
+    transmittance = np.exp(-0.09 * airmass ** 0.75 * (1.0 + 0.012 * pw))
 
     clear_sky = solar_constant * cos_zenith * transmittance
 

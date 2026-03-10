@@ -237,7 +237,7 @@ async def download_all(urls: list[tuple[str, str]], output_dir: Path,
         import certifi
         ssl_ctx.load_verify_locations(certifi.where())
     except ImportError:
-        # Fallback: disable verification if certifi not available
+        logger.warning("certifi not available — SSL verification disabled")
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
     connector = aiohttp.TCPConnector(limit=max_concurrent, ssl=ssl_ctx)

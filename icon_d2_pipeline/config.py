@@ -68,6 +68,13 @@ GLIDER_POLARS = {
 PFD_CU_CLOUDBASE_MIN_AGL = 600  # m - zero wstar if cu cloudbase AGL < this
 PFD_BLUE_THERMAL_MIN_AGL = 800  # m - zero wstar if blue thermals AGL < this
 
+# PFD simple (pfd_tot) hardcoded polar coefficients from calc_funcs.ncl pfd()
+# These are NOT derived from the glider polar — they are the NCL reference values.
+PFD_SIMPLE_A = -0.000302016415111608
+PFD_SIMPLE_B = 0.0729181700942301
+PFD_SIMPLE_C = -5.21488508245734
+PFD_SIMPLE_SRIT = 1.15  # m/s — NCL hardcoded sink rate (not from glider polar)
+
 # Pressure levels for output interpolation (hPa) — for press955..press540 params
 PRESSURE_LEVELS = [955, 899, 846, 795, 701, 616, 540]
 
