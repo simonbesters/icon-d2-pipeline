@@ -81,8 +81,6 @@ def write_geotiff(filepath: Path, data: np.ndarray,
         dstSRS="EPSG:3857",
         format="GTiff",
         resampleAlg="cubicspline",
-        xRes=abs(dlon),
-        yRes=abs(dlat),
         creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2"],
     )
 

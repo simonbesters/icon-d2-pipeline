@@ -12,10 +12,11 @@ from ..config import GRAVITY
 def calc_wstar(vhf: np.ndarray, pblh: np.ndarray) -> np.ndarray:
     """Calculate convective velocity scale w* (Deardorff).
 
-    w* = (g/T_avg * pblh * vhf)^(1/3)
+    w* = (g/T_avg * pblh * Q0)^(1/3)
 
-    where vhf is the virtual heat flux (sensible + moisture contribution).
-    Uses a typical BL temperature of ~300K for the scaling.
+    where Q0 is the kinematic virtual heat flux (K·m/s).
+    vhf is supplied as energy flux (W/m²) and converted to kinematic
+    flux by dividing by ρ·cp ≈ 1200 W/(m²·K).
 
     Args:
         vhf: Virtual heat flux (W/m^2), 2D array.
@@ -26,12 +27,14 @@ def calc_wstar(vhf: np.ndarray, pblh: np.ndarray) -> np.ndarray:
     """
     # Use a representative BL temperature (~300K)
     t_avg = 300.0
+    # Convert energy flux (W/m²) to kinematic flux (K·m/s)
+    rho_cp = 1200.0  # ρ·cp ≈ 1.2 kg/m³ × 1004 J/(kg·K)
 
     # Only compute where vhf > 0 (upward flux = convection)
     wstar = np.zeros_like(vhf)
     positive = vhf > 0.0
     wstar[positive] = np.cbrt(
-        (GRAVITY / t_avg) * pblh[positive] * vhf[positive]
+        (GRAVITY / t_avg) * pblh[positive] * (vhf[positive] / rho_cp)
     )
     return wstar
 
