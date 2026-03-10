@@ -75,6 +75,7 @@ from .grid import find_bbox_indices, get_grid_info, subset_domain
 from .output.data_file import get_data_filename, write_data_file
 from .output.geotiff import write_geotiff
 from .output.json_meta import get_json_filename, write_title_json
+from .output.png_render import write_pngs
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +447,11 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             write_title_json(json_path, param_name, data, valid_dt,
                              forecast_str, init_hour, tz_id)
 
+            # Write PNGs (body, head, foot, side) for web viewer
+            write_pngs(data, param_name, ts_local, out_dir, valid_dt,
+                        forecast_str, init_hour, tz_id,
+                        mult=_get_param_mult(param_name))
+
         # Write wind direction/speed data files for pressure levels
         for plev in PRESSURE_LEVELS:
             param_name = f"press{plev}"
@@ -483,6 +489,7 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
 
     for param_name, pfd_data in pfd_results.items():
         if pfd_data is not None:
+            # Write with timestep (standard format)
             data_filename = get_data_filename(param_name, last_ts)
             write_data_file(out_dir / data_filename, param_name, pfd_data,
                             grid_info, last_valid_dt, str(forecast_hours[-1]),
@@ -495,6 +502,31 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             write_title_json(out_dir / json_filename, param_name, pfd_data,
                              last_valid_dt, str(forecast_hours[-1]),
                              init_hour, tz_id)
+
+            write_pngs(pfd_data, param_name, last_ts, out_dir,
+                        last_valid_dt, str(forecast_hours[-1]),
+                        init_hour, tz_id, mult=1.0)
+
+            # Also write without timestep (viewer expects pfd_tot.body.png)
+            write_data_file(out_dir / f"{param_name}.data", param_name,
+                            pfd_data, grid_info, last_valid_dt,
+                            str(forecast_hours[-1]), init_hour, tz_id)
+            write_title_json(out_dir / f"{param_name}.title.json",
+                             param_name, pfd_data, last_valid_dt,
+                             str(forecast_hours[-1]), init_hour, tz_id)
+            from .output.png_render import render_body, render_head, render_foot, \
+                render_side, _compute_levels
+            levels, colors, unit_str, is_fixed = _compute_levels(
+                param_name, pfd_data, 1.0)
+            render_body(pfd_data, levels, colors).save(
+                out_dir / f"{param_name}.body.png", optimize=True)
+            render_head(param_name, last_valid_dt, str(forecast_hours[-1]),
+                        init_hour, tz_id).save(
+                out_dir / f"{param_name}.head.png", optimize=True)
+            render_foot(levels, colors, unit_str, is_fixed).save(
+                out_dir / f"{param_name}.foot.png", optimize=True)
+            render_side(levels, colors, unit_str, is_fixed).save(
+                out_dir / f"{param_name}.side.png", optimize=True)
 
     # ---- Step 5: Signal completion ----
     # Touch GM.printout to trigger callback
