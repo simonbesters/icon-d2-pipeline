@@ -92,10 +92,15 @@ def _init_worker(weights, indices, target_shape):
     _worker_target_shape = target_shape
 
 
-def _read_and_remap(filepath):
+def _read_and_remap(filepath_str):
     """Read icosahedral GRIB and remap to regular grid (runs in worker process)."""
-    from .fields import read_grib_ico_field
-    ico_1d = read_grib_ico_field(filepath)
+    import eccodes
+    with open(filepath_str, "rb") as f:
+        msgid = eccodes.codes_grib_new_from_file(f)
+        try:
+            ico_1d = eccodes.codes_get_values(msgid)
+        finally:
+            eccodes.codes_release(msgid)
     neighbor_vals = ico_1d[_worker_indices]
     result = np.sum(neighbor_vals * _worker_weights, axis=1)
     return result.reshape(_worker_target_shape).astype(np.float32)
@@ -563,7 +568,7 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                 var_lower = var.lower()
                 num_lev = ICON_D2_NUM_HALF_LEVELS if var == "W" else ICON_D2_NUM_LEVELS
                 filepaths = [
-                    grib_dir / f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2"
+                    str(grib_dir / f"icon-d2_{date_init}_{fh:03d}_{var_lower}_ml{level:03d}.grib2")
                     for level in range(1, num_lev + 1)
                 ]
                 var_level_map[var] = (len(all_filepaths), len(filepaths))
