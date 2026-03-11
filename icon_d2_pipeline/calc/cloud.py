@@ -152,8 +152,13 @@ def calc_blcloudpct(qvapor: np.ndarray, qcloud: np.ndarray,
                     cwbase_criteria: float = CWBASE_CRITERIA) -> np.ndarray:
     """Calculate BL cloud cover percentage.
 
-    Estimates cloud fraction within the BL based on how close the BL air
-    is to saturation and whether cloud water exists.
+    Uses DrJack's GrADS subgrid method (calc_subgrid_blcloudpct_grads_):
+    per-level cloud fraction from a linear RH mapping, taking the maximum
+    over all BL levels.
+
+    Reconstructed from libncl_drjack.so — constants from .rodata:
+      cloud_frac = clamp(400 * RH - 300, 0, 95)
+    This gives 0% at RH=75% and linearly increases to 95% cap.
 
     Args:
         qvapor: Water vapor mixing ratio (level, lat, lon).
@@ -166,38 +171,32 @@ def calc_blcloudpct(qvapor: np.ndarray, qcloud: np.ndarray,
         cwbase_criteria: Cloud water threshold.
 
     Returns:
-        Cloud cover percentage (0-100), (lat, lon).
+        Cloud cover percentage (0-95), (lat, lon).
     """
     nz, ny, nx = tc.shape
     bl_top = ter + pblh
 
-    # RH-based sub-grid cloud fraction estimate per layer
-    # cf_layer = max(0, (RH - RH_crit) / (1 - RH_crit))^2
-    # where RH_crit = 0.80 — standard approach in NWP sub-grid cloud schemes
-    RH_CRIT = 0.80
-
-    cloud_frac_sum = np.zeros((ny, nx), dtype=np.float32)
-    total_layers = np.zeros((ny, nx), dtype=np.float32)
+    cloud_max = np.zeros((ny, nx), dtype=np.float32)
 
     for k in range(nz):
         in_bl = z[k] <= bl_top
 
-        # Compute RH (fractional, 0-1)
-        es = 6.112 * np.exp(17.67 * tc[k] / (tc[k] + 243.5))
-        e = qvapor[k] * pmb[k] / (0.622 + qvapor[k])
-        rh = np.clip(e / np.maximum(es, 0.01), 0.0, 1.0)
+        # Magnus formula for saturation vapor pressure (DrJack constants)
+        # es = 6.112 * exp(17.67 * tc / (tc + 29.65))
+        # Note: 29.65 = 273.15 - 243.5 (Fortran uses T in Kelvin internally)
+        tc_k = tc[k]
+        es = 6.112 * np.exp(17.67 * tc_k / (tc_k + 243.5))
 
-        # Sub-grid cloud fraction: quadratic ramp above RH_crit
-        cf_layer = np.maximum((rh - RH_CRIT) / (1.0 - RH_CRIT), 0.0) ** 2
+        # Saturation mixing ratio: qs = 0.622 * es / (p - 0.378 * es)
+        qs = 0.622 * es / np.maximum(pmb[k] - 0.378 * es, 0.1)
 
-        # Also count explicit cloud water
-        has_cloud = qcloud[k] >= cwbase_criteria
-        cf_layer = np.maximum(cf_layer, np.where(has_cloud, 1.0, 0.0))
+        # Relative humidity (fractional)
+        rh = np.clip(qvapor[k] / np.maximum(qs, 1e-10), 0.0, 1.0)
 
-        cloud_frac_sum += np.where(in_bl, cf_layer, 0.0)
-        total_layers += np.where(in_bl, 1.0, 0.0)
+        # DrJack linear RH→cloud mapping: cloud% = clamp(400*RH - 300, 0, 95)
+        cf_layer = np.clip(400.0 * rh - 300.0, 0.0, 95.0)
 
-    valid = total_layers > 0
-    result = np.zeros((ny, nx), dtype=np.float32)
-    result[valid] = 100.0 * cloud_frac_sum[valid] / total_layers[valid]
-    return result
+        # Take maximum over all BL levels
+        cloud_max = np.where(in_bl, np.maximum(cloud_max, cf_layer), cloud_max)
+
+    return cloud_max
