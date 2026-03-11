@@ -24,11 +24,8 @@ RUN GDAL_VERSION=$(gdal-config --version) && \
 # Copy pipeline code
 COPY icon_d2_pipeline/ /app/icon_d2_pipeline/
 
-# Run as non-root user
-RUN useradd --create-home appuser && \
-    mkdir -p /tmp/results /tmp/icon_d2_grib && \
-    chown appuser:appuser /tmp/results /tmp/icon_d2_grib
-USER appuser
+# Create non-root user (used when container is run without host volume mounts)
+RUN useradd --create-home appuser
 
 # Entry point
 CMD ["python", "-m", "icon_d2_pipeline.run"]

@@ -22,6 +22,7 @@ echo "  Start day: $START_DAY"
 echo "  TZ offset: $TZ_OFFSET"
 
 docker run --rm \
+    --user "$(id -u):$(id -g)" \
     -v "$RESULTS_DIR":"$RESULTS_DIR" \
     -v "$GRIB_DIR":"$GRIB_DIR" \
     -e START_DAY="$START_DAY" \
