@@ -70,44 +70,65 @@ _PFD_COLORS = np.array([
     [87, 252, 0], [255, 233, 0], [240, 130, 0], [174, 23, 0],
 ], dtype=np.uint8)
 
+# Press26 diverging colormap for wblmaxmin (from press26.rgb)
+_PRESS26_COLORS = np.array([
+    [32,32,32], [64,64,64], [96,96,96], [128,128,128],
+    [66,44,178], [101,81,204], [143,126,229], [191,178,255],
+    [15,107,153], [44,133,178], [81,163,204], [126,195,229],
+    [178,229,255], [255,216,178], [229,177,126], [204,142,81],
+    [178,111,44], [153,84,15], [255,178,178], [229,126,126],
+    [204,81,81], [178,44,44], [253,157,24], [253,189,16],
+    [253,224,8], [253,253,0],
+], dtype=np.uint8)
+
 # ---------------------------------------------------------------------------
 # Contour level definitions per parameter
 # (min, max, step) — if min==max==0, auto-scale from data
 # ---------------------------------------------------------------------------
 CONTOUR_PARAMS = {
-    "wstar":        (25, 525, 25),
-    "wstar175":     (25, 525, 25),
-    "hbl":          (200, 3200, 200),
-    "experimental1": (0, 0, 200),
-    "hglider":      (0, 0, 200),
-    "bltopvariab":  (0, 0, 200),
-    "bsratio":      (1, 10, 1),
+    # Thermal strength and B/S ratio (from blipmaps.nl NCL config)
+    "wstar":        (25, 500, 25),
+    "wstar175":     (25, 500, 25),
+    "bsratio":      (1, 9, 1),
+    # BL height/depth and variability
+    "hbl":          (200, 3000, 200),
+    "experimental1": (200, 3000, 200),
+    "hglider":      (200, 3000, 200),
+    "bltopvariab":  (100, 2000, 100),
+    # Cloud height/potential
+    "zsfclcl":      (200, 3000, 200),
+    "zsfclclmask":  (200, 3000, 200),
+    "zblcl":        (200, 3000, 200),
+    "zblclmask":    (200, 3000, 200),
+    "zsfclcldif":   (-2000, 2000, 200),
+    "zblcldif":     (-2000, 2000, 200),
+    # Convergence
+    "wblmaxmin":    (-300, 300, 25),
+    "zwblmaxmin":   (200, 3000, 200),
+    # Percentages
+    "blcloudpct":   (5, 95, 5),
+    "sfcsunpct":    (5, 95, 5),
+    "cfracl":       (5, 95, 5),
+    "cfracm":       (5, 95, 5),
+    "cfrach":       (5, 95, 5),
+    # Wind
     "sfcwind0":     (0, 0, 2),
     "blwind":       (0, 0, 2),
     "bltopwind":    (0, 0, 2),
-    "blwindshear":  (2, 32, 2),
-    "wblmaxmin":    (0, 0, 50),
-    "zwblmaxmin":   (0, 0, 200),
+    "blwindshear":  (2, 30, 2),
+    # Temperatures (auto-scale, fixed step)
     "sfctemp":      (0, 0, 1),
     "sfcdewpt":     (0, 0, 1),
-    "sfcsunpct":    (5, 100, 5),
+    # Pressure (auto-scale, fixed step)
+    "wrf=slp":      (0, 0, 1),
+    "wrf=HGT":      (0, 0, 100),
+    # Other
     "cape":         (0, 0, 100),
     "rain1":        (0, 0, 1),
-    "blcloudpct":   (5, 100, 5),
-    "cfracl":       (5, 100, 5),
-    "cfracm":       (5, 100, 5),
-    "cfrach":       (5, 100, 5),
-    "zsfclcl":      (0, 0, 500),
-    "zsfclcldif":   (0, 0, 500),
-    "zsfclclmask":  (0, 0, 500),
-    "zblcl":        (0, 0, 500),
-    "zblcldif":     (0, 0, 500),
-    "zblclmask":    (0, 0, 500),
-    "wrf=slp":      (0, 0, 2),
-    "wrf=HGT":      (0, 0, 100),
-    "pfd_tot":      (100, 1000, 100),
-    "pfd_tot2":     (100, 1000, 100),
-    "pfd_tot3":     (100, 1000, 100),
+    # PFD
+    "pfd_tot":      (100, 900, 100),
+    "pfd_tot2":     (100, 900, 100),
+    "pfd_tot3":     (100, 900, 100),
 }
 # Pressure level params
 for _p in [955, 899, 846, 795, 701, 616, 540]:
@@ -243,6 +264,10 @@ def _compute_levels(param_name: str, data: np.ndarray, mult: float) -> tuple:
         # PFD uses custom colormap
         colors = _PFD_COLORS[:n_bins] if n_bins <= len(_PFD_COLORS) else \
             _PFD_COLORS[np.linspace(0, len(_PFD_COLORS) - 1, n_bins).astype(int)]
+    elif param_name == "wblmaxmin":
+        # Convergence uses press26 diverging colormap
+        colors = _PRESS26_COLORS[:n_bins] if n_bins <= len(_PRESS26_COLORS) else \
+            _PRESS26_COLORS[np.linspace(0, len(_PRESS26_COLORS) - 1, n_bins).astype(int)]
     else:
         # Sample from BlAqGrYeOrReVi200
         indices = np.linspace(2, len(COLORMAP) - 1, n_bins).astype(int)
