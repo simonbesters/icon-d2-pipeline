@@ -187,8 +187,8 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     # Load land fraction for masking thermals over water
     try:
         fr_land = load_invariant_field(grib_dir, date_init, "fr_land", lat_slice, lon_slice)
-    except Exception:
-        logger.warning("FR_LAND not available — no land/water masking")
+    except Exception as e:
+        logger.warning(f"FR_LAND not available — no land/water masking: {e}", exc_info=True)
         fr_land = None
 
     # Load half-level heights (HHL) — individual files per half-level
@@ -305,7 +305,10 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         results["sfcdewpt"] = calc_sfcdewpt(fields_2d.get("sfcdewpt", nan_default.copy()))
 
         # Virtual heat flux and wstar — suppress over water
-        vhf = fields_2d.get("vhf", np.zeros((ny, nx)))
+        vhf = fields_2d.get("vhf", None)
+        if vhf is None:
+            logger.warning("VHF not available for this timestep")
+            vhf = np.full((ny, nx), np.nan, dtype=np.float32)
         if fr_land is not None:
             vhf = vhf * fr_land  # Scale by land fraction (0 over water, 1 over land)
 
@@ -422,15 +425,15 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         if clcl is not None:
             results["cfracl"] = clcl.astype(np.float32)  # already 0-100%
         else:
-            results["cfracl"] = np.zeros((ny, nx), dtype=np.float32)
+            results["cfracl"] = np.full((ny, nx), np.nan, dtype=np.float32)
         if clcm is not None:
             results["cfracm"] = clcm.astype(np.float32)  # already 0-100%
         else:
-            results["cfracm"] = np.zeros((ny, nx), dtype=np.float32)
+            results["cfracm"] = np.full((ny, nx), np.nan, dtype=np.float32)
         if clch is not None:
             results["cfrach"] = clch.astype(np.float32)  # already 0-100%
         else:
-            results["cfrach"] = np.zeros((ny, nx), dtype=np.float32)
+            results["cfrach"] = np.full((ny, nx), np.nan, dtype=np.float32)
 
         # Pressure levels
         if ua is not None and va is not None and wa is not None and pmb_3d is not None:
@@ -600,7 +603,10 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                 raw_2d[var] = load_2d_field(grib_dir, date_init, fh,
                                             var_lower, lat_slice, lon_slice)
             except Exception as e:
-                logger.debug(f"Could not load {var} fh={fh}: {e}")
+                if var in ("ASHFL_S", "ALHFL_S", "T_2M", "TD_2M", "ASWDIR_S", "ASWDIFD_S"):
+                    logger.warning(f"Could not load essential 2D var {var} fh={fh}: {e}")
+                else:
+                    logger.debug(f"Could not load {var} fh={fh}: {e}")
 
         # De-accumulate time-mean fluxes to approximate instantaneous values
         # ICON-D2 ASHFL_S/ALHFL_S are time-means over [0, fh].
@@ -615,8 +621,8 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
                         accum_now = fh * raw_2d[flux_var]
                         accum_prev = (fh - 1) * prev
                         raw_2d[flux_var] = accum_now - accum_prev
-                    except Exception:
-                        pass  # Keep the mean value as fallback
+                    except Exception as e:
+                        logger.warning(f"Flux de-accumulation failed for {flux_var} fh={fh}: {e}")
 
         # Derive 2D fields
         fields_2d = compute_derived_2d(raw_2d)

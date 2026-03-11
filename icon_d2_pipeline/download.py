@@ -237,9 +237,9 @@ async def download_all(urls: list[tuple[str, str]], output_dir: Path,
         import certifi
         ssl_ctx.load_verify_locations(certifi.where())
     except ImportError:
-        logger.warning("certifi not available — SSL verification disabled")
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
+        raise ImportError(
+            "certifi is required for SSL verification. Install it: pip install certifi"
+        )
     connector = aiohttp.TCPConnector(limit=max_concurrent, ssl=ssl_ctx)
     timeout = aiohttp.ClientTimeout(total=300)
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:

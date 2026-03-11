@@ -42,11 +42,11 @@ SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
 target_host="${UPLOAD_TARGET%%:*}"
 target_path="${UPLOAD_TARGET#*:}"
 
-ssh $SSH_OPTS "$target_host" "mkdir -p ${target_path}/${region}/NL+${START_DAY}"
+ssh $SSH_OPTS "$target_host" "mkdir -p '${target_path}/${region}/NL+${START_DAY}'"
 scp $SSH_OPTS -r "$RESULTS_DIR/OUT/"* "${REMOTE_DIR}"
 
 # Signal completion
-ssh $SSH_OPTS "$target_host" "echo 'upload complete' > ${target_path}/${region}/NL+${START_DAY}/xfer.log"
+ssh $SSH_OPTS "$target_host" "echo 'upload complete' > '${target_path}/${region}/NL+${START_DAY}/xfer.log'"
 
 echo "Upload complete."
 

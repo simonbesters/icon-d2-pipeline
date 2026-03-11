@@ -33,7 +33,15 @@ def main():
 
     # Read environment variables
     start_day = int(os.environ.get("START_DAY", "0"))
+    if not 0 <= start_day <= 7:
+        logger.error(f"START_DAY must be 0-7, got {start_day}")
+        sys.exit(1)
+
     init_hour = int(os.environ.get("OFFSET_HOUR", "0"))
+    if init_hour not in (0, 3, 6, 9, 12, 15, 18, 21):
+        logger.error(f"OFFSET_HOUR must be a valid init hour (0,3,6,...,21), got {init_hour}")
+        sys.exit(1)
+
     results_dir = Path(os.environ.get("RESULTS_DIR", "/tmp/results"))
     grib_dir_str = os.environ.get("GRIB_DIR", "/tmp/icon_d2_grib")
     grib_dir = Path(grib_dir_str)
@@ -41,7 +49,11 @@ def main():
     # Auto-detect timezone offset
     tz_offset_str = os.environ.get("TZ_OFFSET", "")
     if tz_offset_str:
-        tz_offset = int(tz_offset_str)
+        try:
+            tz_offset = int(tz_offset_str)
+        except ValueError:
+            logger.error(f"TZ_OFFSET must be an integer, got '{tz_offset_str}'")
+            sys.exit(1)
     else:
         # Auto-detect from system timezone
         tz_offset = _detect_tz_offset()
