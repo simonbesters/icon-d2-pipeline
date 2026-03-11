@@ -36,12 +36,12 @@ def calc_wstar(vhf: np.ndarray, pblh: np.ndarray,
 
 def calc_hcrit(wstar: np.ndarray, ter: np.ndarray,
                pblh: np.ndarray) -> np.ndarray:
-    """Calculate height MSL where thermal updraft strength = 175 fpm (critical).
+    """Calculate height MSL where thermal updraft strength = 225 fpm (critical).
 
     The thermal profile is modeled as decreasing linearly from surface to BL top.
     At height z above terrain, updraft = wstar * (1 - (z-ter)/(pblh)).
-    The "critical" updraft is 175 fpm = 0.889 m/s.
-    Solving: z_crit = ter + pblh * (1 - 0.889/wstar)
+    The "critical" updraft is 225 fpm = 1.143 m/s (Dr. Jack's Fortran uses 225).
+    Solving: z_crit = ter + pblh * (1 - 1.143/wstar)
 
     Args:
         wstar: Convective velocity scale (m/s).
@@ -52,7 +52,7 @@ def calc_hcrit(wstar: np.ndarray, ter: np.ndarray,
         Height MSL (m) where updraft drops below 175 fpm.
         Set to terrain height where wstar is too weak.
     """
-    critical_ms = 175.0 * 0.00508  # 175 fpm to m/s = 0.889 m/s
+    critical_ms = 225.0 * 0.00508  # 225 fpm to m/s = 1.143 m/s
 
     hcrit = np.full_like(wstar, fill_value=-999.0)
     valid = wstar > critical_ms

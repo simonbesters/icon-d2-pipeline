@@ -194,6 +194,8 @@ def _compute_levels(param_name: str, data: np.ndarray, mult: float) -> tuple:
         is_fixed: whether this is a fixed or auto scale
     """
     scaled = data * mult
+    # Treat -999999 fill values as NaN so they don't affect auto-scaling
+    scaled = np.where(scaled <= -999000, np.nan, scaled)
     cp = CONTOUR_PARAMS.get(param_name, (0, 0, 0))
     cmin, cmax, step = cp
 
@@ -254,8 +256,12 @@ def render_body(data: np.ndarray, levels: np.ndarray,
         PIL Image in RGBA mode.
     """
     ny, nx = data.shape
+    # Mask NaN / fill values
+    nodata = np.isnan(data) | (data <= -999000)
+    clean = np.where(nodata, 0, data)
+
     # Digitize: map each value to a bin index
-    bin_idx = np.digitize(data, levels) - 1
+    bin_idx = np.digitize(clean, levels) - 1
     bin_idx = np.clip(bin_idx, 0, len(colors) - 1)
 
     # Build RGB image
@@ -263,11 +269,12 @@ def render_body(data: np.ndarray, levels: np.ndarray,
 
     # Flip vertically: data row 0 = south, image row 0 = top (north)
     rgb = rgb[::-1]
+    nodata = nodata[::-1]
 
-    # Create RGBA (fully opaque)
+    # Create RGBA — transparent where no data
     rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
     rgba[:, :, :3] = rgb
-    rgba[:, :, 3] = 255
+    rgba[:, :, 3] = np.where(nodata, 0, 255)
 
     return Image.fromarray(rgba, "RGBA")
 
