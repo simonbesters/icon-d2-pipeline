@@ -27,8 +27,9 @@ def calc_wstar(vhf: np.ndarray, pblh: np.ndarray,
         w* in m/s, 2D array. Negative or zero vhf yields 0.
     """
     # Only compute where vhf > 0 (upward flux = convection)
-    # Use np.where to handle both scalar and array t_avg correctly
-    arg = (GRAVITY / t_avg) * pblh * vhf
+    # Convert energy flux (W/m²) to kinematic flux (K·m/s): divide by ρ·cp
+    RHO_CP = 1200.0  # ρ·cp ≈ 1.2 kg/m³ × 1004 J/(kg·K)
+    arg = (GRAVITY / t_avg) * pblh * (vhf / RHO_CP)
     wstar = np.where(vhf > 0.0, np.cbrt(np.maximum(arg, 0.0)), 0.0)
     return wstar.astype(np.float32)
 

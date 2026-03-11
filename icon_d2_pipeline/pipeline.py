@@ -184,6 +184,13 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     ter = load_invariant_field(grib_dir, date_init, "hsurf", lat_slice, lon_slice)
     ter = np.maximum(ter, 1.0)  # Floor at 1m like WRF code
 
+    # Load land fraction for masking thermals over water
+    try:
+        fr_land = load_invariant_field(grib_dir, date_init, "fr_land", lat_slice, lon_slice)
+    except Exception:
+        logger.warning("FR_LAND not available — no land/water masking")
+        fr_land = None
+
     # Load half-level heights (HHL) — individual files per half-level
     hhl_levels = []
     for level in range(1, 67):  # 66 half-levels
@@ -297,8 +304,10 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         results["sfctemp"] = calc_sfctemp(fields_2d.get("sfctemp", nan_default.copy()))
         results["sfcdewpt"] = calc_sfcdewpt(fields_2d.get("sfcdewpt", nan_default.copy()))
 
-        # Virtual heat flux and wstar
+        # Virtual heat flux and wstar — suppress over water
         vhf = fields_2d.get("vhf", np.zeros((ny, nx)))
+        if fr_land is not None:
+            vhf = vhf * fr_land  # Scale by land fraction (0 over water, 1 over land)
 
         # Compute BL-averaged temperature for wstar scaling
         t_3d = fields_3d.get("T", None)
