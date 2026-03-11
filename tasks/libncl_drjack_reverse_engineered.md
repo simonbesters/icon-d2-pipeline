@@ -96,8 +96,8 @@ libc.so.6          libgomp.so.1
 | `0x31be7c` | **1e-9** | Minimale cosinus drempel |
 | `0x31be80` | **287.0** | Rd = gascons. droge lucht (J/kg/K) |
 | `0x31be84` | **1e-4** | Accumulatie vermenigvuldiger |
-| `0x31be88` | **141.5** | Power-argument vermenigvuldiger |
-| `0x31be8c` | **0.635** | Power-argument basis |
+| `0x31be88` | **141.5** | Power-law basis vermenigvuldiger |
+| `0x31be8c` | **0.635** | Power-law **EXPONENT** (2e arg van `powf`) |
 | `0x31be90` | **2.9** | Resultaat deler 1 |
 | `0x31be94` | **5.925** | Resultaat deler 2 |
 | `0x31be98` | **1e-5** | dz vermenigvuldiger |
@@ -141,14 +141,21 @@ libc.so.6          libgomp.so.1
 **Grootte**: 496 bytes @ `0x22640`
 **Aanroepen**: Geen externe calls
 
-#### Signature (Fortran)
+#### Signature (Fortran) — **gecorrigeerd na verificatie**
 ```fortran
-subroutine calc_hcrit_(wstar, ter, result, nx, ny)
+subroutine calc_hcrit_(wstar, ter, hbl, nx, ny, result)
     real, intent(in)    :: wstar(nx, ny)   ! W* convectieve snelheid (m/s)
     real, intent(in)    :: ter(nx, ny)     ! Terrain hoogte (m)
-    real, intent(out)   :: result(nx, ny)  ! Kritische hoogte (m MSL)
+    real, intent(in)    :: hbl(nx, ny)     ! BL diepte (m) — 3e array argument
     integer, intent(in) :: nx, ny
+    real, intent(out)   :: result(nx, ny)  ! Kritische hoogte (m MSL) — 6e argument
 ```
+
+> **Verificatie**: Uit de disassembly blijkt dat `calc_hcrit_` **6 argumenten** heeft:
+> `rdi=wstar, rsi=ter, rdx=hbl, rcx=&nx, r8=&ny, r9=result`.
+> Het 3e register (`rdx`) wordt als aparte array geladen en vermenigvuldigd met het
+> thermische model resultaat op adres `0x22750`. Het resultaat wordt geschreven naar
+> het 6e register (`r9`) op adres `0x2276a`.
 
 #### Gereconstrueerd Algoritme
 ```fortran
@@ -166,10 +173,10 @@ do j = 1, ny
       height_frac = sqrt(height_frac)      ! niet-lineaire correctie
       height_frac = height_frac + 0.1126   ! basishoogte offset
 
-      result(i,j) = ter(i,j) + height_frac * ter(i,j)
-      ! ^^^ NB: ter wordt hier 2× gebruikt — eenmaal als basis,
-      !         eenmaal als schaalfactor. Mogelijk is het 2e argument
-      !         eigenlijk BL-diepte (hbl) en niet ter.
+      result(i,j) = ter(i,j) + height_frac * hbl(i,j)
+      ! ^^^ GEVERIFIEERD: het 3e argument (rdx) is een aparte array (hbl),
+      !     NIET ter hergebruikt. De vermenigvuldiging staat op 0x22750:
+      !     vmulss xmm0, xmm0, [r9 + 4*rdx - 4]  (r9 = hbl base)
     else
       result(i,j) = ter(i,j)              ! Geen thermiek → terrein hoogte
     end if
@@ -183,8 +190,8 @@ end do
 #### Analyse
 - **Drempel**: 225 ft/min ≈ 1.143 m/s — bevestigt de waarde die in rasp-pynumb wordt gebruikt
 - **Conversie**: 196.85 ft/min per m/s — standaard
-- Het thermische model is een empirische benadering: `height = (sqrt(a₃*(a₂ - a₁*225/W*) + a₄) + a₅) × z`
-- **Let op**: De 3e input (`r8` register → via stack argument) lijkt een hoogteschaal te zijn (BL diepte?), niet alleen terrein. De 4e input is het resultaat. Controleer de NCL wrapper `calc_hcrit_W` voor de daadwerkelijke argumentvolgorde.
+- Het thermische model is een empirische benadering: `height = ter + (sqrt(a₃*(a₂ - a₁*225/W*) + a₄) + a₅) × hbl`
+- **GEVERIFIEERD**: Het 3e argument is hbl (BL diepte), NIET ter hergebruikt. De formule is: `result = ter + sqrt_model × hbl`. Dit is bevestigd via registertracing: `rdx` (3e arg) → `r9` (na remap) → vermenigvuldigd op `0x22750`.
 
 ---
 
@@ -235,7 +242,7 @@ end do
 #### Verschil met `calc_hcrit_`
 - `calc_hlift_` heeft een **extra parameter** (`iopt` via het eerste register `%rdi`), die als drempel dient i.p.v. de hardcoded 225.
 - De drempel wordt vergeleken met `xmm3` (geladen van `(%r10)` = `*iopt`), niet de constante 225.0.
-- `calc_hlift_` gebruikt `hbl(i,j)` als schaalfactor voor de hoogte, waar `calc_hcrit_` `ter` tweemaal lijkt te gebruiken.
+- **GEVERIFIEERD**: Beide functies gebruiken `hbl(i,j)` als schaalfactor — `calc_hcrit_` heeft ook hbl als 3e argument (niet ter hergebruikt).
 
 ---
 
@@ -435,9 +442,12 @@ do j = 1, ny
       optical_depth = rho * q(i,j,k) * dz_layer(k) * 1000.0
       tau_total = tau_total + optical_depth * 1e-4
 
-      ! Power law extinctie
-      x = tau_total * 141.5 / cos_zenith
-      transmittance = powf(x + 0.635)   ! empirische transmissiefunctie
+      ! Power law extinctie — GEVERIFIEERD via disassembly 0x28cb8-0x28cca:
+      !   xmm0 = tau * 1e-4 / cos_z * 141.5 + 1.0  (base)
+      !   xmm1 = 0.635                               (exponent, geladen op 0x28c73)
+      !   call powf                                   (op 0x28cca)
+      x = 1.0 + tau_total * 1e-4 * 141.5 / cos_zenith
+      transmittance = powf(x, 0.635)   ! 0.635 is de EXPONENT, niet additief!
 
       ! Bereken zon-fractie
       sfrac_1 = tau_total / 2.9       ! diffuse component
@@ -466,9 +476,13 @@ end do
 
 #### Analyse
 - **Complexiteit**: Dit is de meest complexe functie (2240 bytes). Het model berekent zonlichtpenetratie door een verticale kolom.
-- **Methode**: Lijkt op een **twee-stroom benadering** met empirische power-law transmissie.
+- **Methode**: Empirische power-law transmissie met columnaire extinctie-integratie.
 - Gebruikt `radconst_` voor declinatie en uurhoekberekening — dit is de WRF `radconst` routine.
-- De constanten (141.5, 0.635, 2.9, 5.925) suggereren een **empirisch extinctiemodel**, geen standaard Kasten (1980).
+- **GEVERIFIEERD**: De power-law formule is `transmittance = (1.0 + 141.5 × τ / cos(θ))^0.635`.
+  - `0.635` is de **EXPONENT** (geladen in `xmm1` op adres `0x28c73` vanuit `0x31be8c`)
+  - `141.5` is de basis-vermenigvuldiger (geladen op `0x28cb8` vanuit `0x31be88`)
+  - De `1.0 +` term garandeert transmittance ≥ 1 bij nul optische diepte
+- De constanten (2.9, 5.925) worden na powf gebruikt voor diffuse/directe componenten.
 - **Vergelijking met rasp-pynumb**: Als jullie Kasten (1980) gebruiken voor duidelijke-luchttransmissie met een Linke turbidity factor, dan is het DrJack-model significant anders — het integreert de columnaire wolkwater-extinctie direct.
 
 ---
@@ -850,16 +864,20 @@ do j = 1, ny
       integral = integral + 0.5 * (qc(i,j,k) + qc(i,j,k-1)) * dz
     end do
 
-    ! Schaal met 2490 (latente warmte gerelateerd)
-    result(i,j) = integral * 2490.0
+    ! Schaal met hbl × 2490 / normalisatie — GEVERIFIEERD op 0x23be4-0x23bf1:
+    !   vmulss xmm0, xmm6, xmm2      → hbl × integral
+    !   vmulss xmm0, xmm0, xmm5      → × 2490.0
+    !   vdivss xmm0, xmm0, [rax+r12] → / array_divisor (vermoedelijk z of p)
+    result(i,j) = hbl(i,j) * integral * 2490.0 / divisor(i,j)
   end do
 end do
 ```
 
 #### Analyse
-- Structureel identiek aan `calc_blinteg_mixratio_` maar met schaalfactor **2490.0** in plaats van 102.04.
-- 2490 ≈ L_v/1000 waar L_v ≈ 2.49 × 10⁶ J/kg (latente warmte van verdamping).
-- Het resultaat is dus de **latente warmte-equivalent** van het geïntegreerde wolkenwater in de BL.
+- Structureel vergelijkbaar met `calc_blinteg_mixratio_` maar met **complexere eindformule**.
+- **GEVERIFIEERD**: De uitkomst is NIET simpelweg `integral × 2490.0`. Er is een extra vermenigvuldiging met `hbl` (xmm6, geladen op `0x23af5`) en een deling door een array-waarde (op `0x23bf1`).
+- De schaalfactor **2490.0** ≈ L_v/1000 waar L_v ≈ 2.49 × 10⁶ J/kg (latente warmte van verdamping).
+- De extra hbl/divisor factor maakt het een **genormaliseerde hoogte-fractie** van het wolkenwater, consistent met de naam "qcblhf" (cloud water BL Height Fraction).
 
 ---
 
@@ -869,35 +887,51 @@ end do
 **Grootte**: 1104 bytes @ `0x354c0`
 **Aanroepen**: Geen externe calls
 
-#### Signature (Fortran)
+#### Signature (Fortran) — **gecorrigeerd na verificatie**
 ```fortran
-subroutine filter2d_(field, nx, ny, npass)
-    real, intent(inout) :: field(nx, ny)    ! In-place smoothing
+subroutine filter2d_(field, temp, nx, ny, npass)
+    real, intent(inout) :: field(nx, ny)    ! Veld dat gesmoothd wordt
+    real, intent(inout) :: temp(nx, ny)     ! Tijdelijk werkarray (2e argument)
     integer, intent(in) :: nx, ny
     integer, intent(in) :: npass            ! Aantal smooth-iteraties
 ```
 
+> **Verificatie**: De functie heeft **5 argumenten**, niet 4. Het 2e register (`rsi`)
+> wordt opgeslagen op `[rsp+0x8]` en gebruikt als tijdelijke buffer. De data wordt
+> eerst van `field` naar `temp` gekopieerd (loop op `0x35599`), waarna de smoothing
+> vanuit `temp` terug naar `field` geschreven wordt.
+
 #### Gereconstrueerd Algoritme
 ```fortran
 do pass = 1, npass
+  ! Stap 1: Kopieer field → temp (loop op 0x35599)
+  temp(:,:) = field(:,:)
+
+  ! Stap 2: Smooth in j-richting (loop op 0x35690), leest temp, schrijft field
+  do j = 3, ny-1
+    do i = 2, nx-1
+      field(i,j) = field(i,j) + 0.25 * (temp(i,j-1) + temp(i,j+1) - 2.0*temp(i,j))
+    end do
+  end do
+
+  ! Stap 3: Smooth in i-richting (loop op 0x3574d), leest temp, schrijft field
   do j = 2, ny-1
     do i = 2, nx-1
-      ! 5-punts Laplaciaan smoother
-      laplacian = field(i-1,j) + field(i+1,j) + &
-                  field(i,j-1) + field(i,j+1) - 4.0 * field(i,j)
-      field(i,j) = field(i,j) + 0.25 * laplacian
+      field(i,j) = field(i,j) + 0.25 * (temp(i-1,j) + temp(i+1,j) - 2.0*temp(i,j))
     end do
   end do
 end do
+! Netto effect: field = field + 0.25 * (∇²field) — equivalent aan 5-punts Laplaciaan
 ```
 
 #### Analyse
-- **Eenvoudige 2D Laplaciaan diffusie** met gewicht **0.25** (= 1/4).
-- In-place bewerking — geen tijdelijk array.
+- **2D Laplaciaan diffusie** met gewicht **0.25** (= 1/4), geïmplementeerd als **gescheiden 1D passes**.
+- **GEVERIFIEERD**: Gebruikt een **tijdelijk array** (`temp`, 2e argument). De oorspronkelijke waarden worden naar `temp` gekopieerd, waarna de smoothing vanuit `temp` naar `field` geschreven wordt.
 - Randpixels (i=1, i=nx, j=1, j=ny) worden NIET aangepast.
-- Dit is equivalent aan: `field_new = field + 0.25 * ∇²field`
+- Mathematisch equivalent aan: `field_new = field + 0.25 * ∇²field` (5-punts Laplaciaan), omdat beide 1D passes dezelfde `temp` buffer lezen.
 - De 0.25 gewicht garandeert stabiliteit (maximaal 0.25 voor 2D diffusie).
 - `npass` controleert de hoeveelheid smoothing.
+- De constante 0.25 wordt geladen vanuit `0x31be68` (bevestigd op `0x3561c` en `0x35700`).
 
 ---
 
@@ -957,18 +991,18 @@ end do
 
 | Functie | DrJack Methode | Mogelijke rasp-pynumb Verschil |
 |---|---|---|
-| `calc_hcrit_` | Empirisch √-model, drempel 225 fpm | Drempel bevestigd. Check coëfficiënten. |
+| `calc_hcrit_` | Empirisch √-model, drempel 225 fpm, `result = ter + model × hbl` | Drempel bevestigd. **6 args**: hbl is 3e array. |
 | `calc_hlift_` | Zelfde model, variabele drempel | Extra parameter voor drempel |
 | `calc_sfclclheight_` | Bolton (1980) via `ptlcl_` | rasp-pynumb: Espy als fallback |
 | `calc_blclheight_` | RH=100% zoek + lineaire interpolatie | Check of methode overeenkomt |
-| `calc_sfcsunpct_` | Empirisch extinctiemodel (power law) | rasp-pynumb: Kasten (1980) — **significant anders** |
+| `calc_sfcsunpct_` | Power-law: `(1+141.5τ/cos_z)^0.635` | rasp-pynumb: Kasten (1980) — **significant anders** |
 | `calc_subgrid_blcloudpct_grads_` | Lineair RH-mapping: 400×RH − 300 | rasp-pynumb: RH-scheme — vergelijk mapping |
 | `calc_blavg_` | **Gewogen trapeziumintegratie** | NIET simpel gemiddelde! |
 | `calc_wblmaxmin_` | 4 modi: waarde/hoogte/diff/ratio | Check modus-implementatie |
 | `calc_blinteg_mixratio_` | Trapezium × 102.04 (1000/g) | Ontbreekt in pipeline |
 | `calc_aboveblinteg_mixratio_` | Spiegelbeeld, boven BL | Ontbreekt in pipeline |
-| `calc_qcblhf_` | Trapezium × 2490.0 (Lv/1000) | Ontbreekt in pipeline |
-| `filter2d_` | 2D Laplaciaan, gewicht 0.25 | Ontbreekt in pipeline |
+| `calc_qcblhf_` | Trapezium × hbl × 2490.0 / divisor | Ontbreekt in pipeline |
+| `filter2d_` | 2D Laplaciaan (gesplitste 1D), gewicht 0.25, temp buffer | Ontbreekt in pipeline |
 | `dcapedjss_`/`dcapethermos_` | Volledige DCAPE, double precision | Ontbreekt in pipeline |
 
 ---
@@ -1031,5 +1065,50 @@ expf           — exponentieel
 
 ---
 
+---
+
+## Verificatierapport
+
+De reconstructies zijn systematisch gecontroleerd tegen de originele binary disassembly.
+Onderstaande correcties zijn doorgevoerd na verificatie:
+
+### Gevonden en gecorrigeerde fouten
+
+| # | Functie | Fout | Correctie |
+|---|---------|------|-----------|
+| 1 | `calc_hcrit_` | Signature had 5 args, 3e arg beschreven als "ter hergebruikt" | **6 argumenten**: `(wstar, ter, hbl, nx, ny, result)`. Het 3e arg is een aparte array (`hbl`), geladen via `rdx` register. |
+| 2 | `calc_hcrit_` | Formule: `result = ter + sqrt_model × ter` | **Correct**: `result = ter + sqrt_model × hbl` — bevestigd op `0x22750` |
+| 3 | `calc_sfcsunpct_` | `powf(x + 0.635)` — 0.635 als additieve constante | **Correct**: `powf(1.0 + 141.5*τ/cos_z, 0.635)` — 0.635 is de **EXPONENT** (`xmm1` op `0x28c73`) |
+| 4 | `calc_qcblhf_` | `result = integral × 2490.0` | **Correct**: `result = hbl × integral × 2490.0 / divisor` — extra factoren op `0x23be4-0x23bf1` |
+| 5 | `filter2d_` | "In-place, geen tijdelijk array", 4 args | **5 argumenten** met temp buffer als 2e arg. Smoothing via gescheiden 1D passes (j dan i) |
+| 6 | Constants tabel | `0x31be8c` = "Power-argument basis" | **Correct**: "Power-law EXPONENT" |
+
+### Geverifieerde functies (correct bevonden)
+
+| Functie | Status | Bevestigde details |
+|---------|--------|--------------------|
+| `calc_hcrit_` | ✅ Algoritme correct, signature gecorrigeerd | Thermisch √-model met 225 fpm drempel |
+| `calc_hlift_` | ✅ Correct | Variabele drempel, zelfde model als hcrit |
+| `calc_sfclclheight_` | ✅ Correct | Bolton (1980) via `ptlcl_`, missing=-999, lineaire interpolatie |
+| `calc_blavg_` | ✅ Correct | Gewogen trapeziumintegratie, NIET simpel gemiddelde |
+| `calc_subgrid_blcloudpct_grads_` | ✅ Correct | Magnus-formule (17.67, 273.15, 29.65, 6.112), mapping 400×RH−300 |
+| `calc_wblmaxmin_` | ✅ Correct | 4 modi (waarde×100, hoogte, hoogte−sfc, fractie×100), sign-bit abs() |
+| `calc_sfcsunpct_` | ✅ Algoritme correct, powf-formule gecorrigeerd | Empirisch power-law model, NIET Kasten |
+| `calc_blinteg_mixratio_` | ✅ Correct | Trapezoid × 102.04 (1000/g) |
+| `calc_aboveblinteg_mixratio_` | ✅ Correct | Spiegelbeeld, zelfde 102.04 schaling |
+| `calc_qcblhf_` | ✅ Structuur correct, eindformule gecorrigeerd | Extra hbl/divisor factor |
+| `filter2d_` | ✅ Resultaat correct, implementatie gecorrigeerd | 5-punts Laplaciaan via gesplitste 1D passes |
+
+### Niet-geverifieerde functies
+
+| Functie | Reden |
+|---------|-------|
+| `dcapedjss_` | Te groot (9344 bytes), double precision, complexe controlflow |
+| `dcapethermos_` | Hulpfunctie van dcapedjss_, structuur correct maar details niet geverifieerd |
+| `calc_blclheight_` | Structuur geverifieerd (RH=100% zoek), details niet volledig getraceerd |
+
+---
+
 *Gegenereerd door reverse engineering van `libncl_drjack.avx512.nocuda.so` (BuildID: ea10255db82c73a82ff74893e4014f8393cd1b55)*
 *Alle pseudocode is gereconstrueerd uit x86-64 disassembly en kan afwijken van de originele Fortran broncode.*
+*Verificatie uitgevoerd door systematische vergelijking van claims met binary disassembly (maart 2026).*

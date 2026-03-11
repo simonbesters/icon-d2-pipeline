@@ -182,8 +182,8 @@ def calc_blcloudpct(qvapor: np.ndarray, qcloud: np.ndarray,
         in_bl = z[k] <= bl_top
 
         # Magnus formula for saturation vapor pressure (DrJack constants)
-        # es = 6.112 * exp(17.67 * tc / (tc + 29.65))
-        # Note: 29.65 = 273.15 - 243.5 (Fortran uses T in Kelvin internally)
+        # Fortran form: es = 6.112 * exp(17.67 * (T_K - 273.15) / (T_K - 29.65))
+        # Equivalent Celsius form: es = 6.112 * exp(17.67 * tc / (tc + 243.5))
         tc_k = tc[k]
         es = 6.112 * np.exp(17.67 * tc_k / (tc_k + 243.5))
 
