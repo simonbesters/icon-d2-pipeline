@@ -226,8 +226,9 @@ def compute_derived_2d(raw: dict) -> dict:
     # Difference between T_2M and lowest model level T is typically ~0.5-2K
     # which produces a ~0.1-0.5% change in VHF — acceptable approximation.
     if "ASHFL_S" in raw and "ALHFL_S" in raw and "T_2M" in raw:
-        hfx = raw["ASHFL_S"]
-        lh = np.maximum(raw["ALHFL_S"], 0.0)
+        # ICON convention: positive = downward; negate to get positive = upward
+        hfx = -raw["ASHFL_S"]
+        lh = np.maximum(-raw["ALHFL_S"], 0.0)
         derived["vhf"] = hfx + 0.000245268 * raw["T_2M"] * lh
 
     # Total incoming solar radiation
