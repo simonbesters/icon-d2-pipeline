@@ -209,7 +209,7 @@ async def _download_one(session: aiohttp.ClientSession, url: str,
 
 
 async def download_all(urls: list[tuple[str, str]], output_dir: Path,
-                       max_concurrent: int = 20) -> list[Path]:
+                       max_concurrent: int = 100) -> list[Path]:
     """Download all GRIB files in parallel with concurrency limit.
 
     Args:
