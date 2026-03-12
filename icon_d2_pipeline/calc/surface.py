@@ -41,6 +41,7 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
 
     Returns:
         Sunshine percentage (0-100), same shape as swdown.
+        -999 where sun is below horizon.
     """
     # Make 2D lat/lon if needed
     if lat.ndim == 1 and lon.ndim == 1:
@@ -86,9 +87,12 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
 
     clear_sky = solar_constant * cos_zenith * transmittance
 
-    # Sunshine percentage
-    result = np.where(clear_sky > 10.0,
-                      100.0 * swdown / clear_sky,
-                      np.where(cos_zenith > 0.01, 50.0, 0.0))
+    # Sunshine percentage = 100 * swdown / clear_sky
+    # -999 where sun is below horizon (DrJack convention: missing value)
+    result = np.where(
+        ~sun_up, -999.0,
+        np.where(clear_sky > 10.0,
+                 np.clip(100.0 * swdown / clear_sky, 0.0, 100.0),
+                 50.0))
 
-    return np.clip(result, 0.0, 100.0).astype(np.float32)
+    return result.astype(np.float32)
