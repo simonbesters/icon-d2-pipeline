@@ -111,10 +111,10 @@ CONTOUR_PARAMS = {
     "cfracl":       (5, 95, 5),
     "cfracm":       (5, 95, 5),
     "cfrach":       (5, 95, 5),
-    # Wind
-    "sfcwind0":     (0, 0, 2),
-    "blwind":       (0, 0, 2),
-    "bltopwind":    (0, 0, 2),
+    # Wind (NCL: fixed 2-30)
+    "sfcwind0":     (2, 30, 2),
+    "blwind":       (2, 30, 2),
+    "bltopwind":    (2, 30, 2),
     "blwindshear":  (2, 30, 2),
     # Temperatures (auto-scale, fixed step)
     "sfctemp":      (0, 0, 1),
@@ -124,11 +124,15 @@ CONTOUR_PARAMS = {
     "wrf=HGT":      (0, 0, 100),
     # Other
     "cape":         (0, 0, 100),
-    "rain1":        (0, 0, 1),
     # PFD
     "pfd_tot":      (100, 900, 100),
     "pfd_tot2":     (100, 900, 100),
     "pfd_tot3":     (100, 900, 100),
+}
+# Explicit (non-uniform) contour levels per parameter
+EXPLICIT_LEVELS = {
+    "rain1": np.array([0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0,
+                        15.0, 20.0, 25.0, 30.0, 35.0]),
 }
 # Pressure level params
 for _p in [955, 899, 846, 795, 701, 616, 540]:
@@ -230,28 +234,33 @@ def _compute_levels(param_name: str, data: np.ndarray, mult: float) -> tuple:
     scaled = data * mult
     # Treat -999999 fill values as NaN so they don't affect auto-scaling
     scaled = np.where(scaled <= -999000, np.nan, scaled)
-    cp = CONTOUR_PARAMS.get(param_name, (0, 0, 0))
-    cmin, cmax, step = cp
 
     is_pfd = param_name.startswith("pfd_tot")
 
-    if cmin < cmax and step > 0:
-        # Fixed scale
-        levels = np.arange(cmin, cmax + step * 0.01, step)
+    # Check for explicit (non-uniform) levels first
+    if param_name in EXPLICIT_LEVELS:
+        levels = EXPLICIT_LEVELS[param_name]
         is_fixed = True
     else:
-        # Auto-scale from data
-        vmin = float(np.nanmin(scaled))
-        vmax = float(np.nanmax(scaled))
-        if step <= 0:
-            step = max(1, int((vmax - vmin) / 20))
-        # Nice rounding
-        vmin = np.floor(vmin / step) * step
-        vmax = np.ceil(vmax / step) * step
-        if vmin >= vmax:
-            vmax = vmin + step
-        levels = np.arange(vmin, vmax + step * 0.01, step)
-        is_fixed = False
+        cp = CONTOUR_PARAMS.get(param_name, (0, 0, 0))
+        cmin, cmax, step = cp
+        if cmin < cmax and step > 0:
+            # Fixed scale
+            levels = np.arange(cmin, cmax + step * 0.01, step)
+            is_fixed = True
+        else:
+            # Auto-scale from data
+            vmin = float(np.nanmin(scaled))
+            vmax = float(np.nanmax(scaled))
+            if step <= 0:
+                step = max(1, int((vmax - vmin) / 20))
+            # Nice rounding
+            vmin = np.floor(vmin / step) * step
+            vmax = np.ceil(vmax / step) * step
+            if vmin >= vmax:
+                vmax = vmin + step
+            levels = np.arange(vmin, vmax + step * 0.01, step)
+            is_fixed = False
 
     # Limit to 26 levels max
     if len(levels) > 26:

@@ -420,15 +420,15 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         clcm = fields_2d.get("CLCM", None)
         clch = fields_2d.get("CLCH", None)
         if clcl is not None:
-            results["cfracl"] = (clcl * 100.0).astype(np.float32)  # fraction → %
+            results["cfracl"] = clcl.astype(np.float32)  # already 0-100%
         else:
             results["cfracl"] = np.zeros((ny, nx), dtype=np.float32)
         if clcm is not None:
-            results["cfracm"] = (clcm * 100.0).astype(np.float32)
+            results["cfracm"] = clcm.astype(np.float32)  # already 0-100%
         else:
             results["cfracm"] = np.zeros((ny, nx), dtype=np.float32)
         if clch is not None:
-            results["cfrach"] = (clch * 100.0).astype(np.float32)
+            results["cfrach"] = clch.astype(np.float32)  # already 0-100%
         else:
             results["cfrach"] = np.zeros((ny, nx), dtype=np.float32)
 
