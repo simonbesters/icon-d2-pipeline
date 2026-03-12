@@ -1,0 +1,18 @@
+[Unit]
+Description=ICON-D2 Pipeline Trigger Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/root/icon-d2-pipeline/trigger.sh
+Restart=always
+RestartSec=60
+Environment=INIT_HOURS=0 3 6 9 12 15 18 21
+Environment=START_DAYS=0 1
+Environment=POLL_INTERVAL=300
+Environment=LOCK_DIR=/tmp/icond2-triggers
+Environment=TRIGGER_LOG=/var/log/icond2-trigger.log
+
+[Install]
+WantedBy=multi-user.target
