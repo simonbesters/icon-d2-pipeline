@@ -91,14 +91,11 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
     clear_sky = solar_constant * cos_z * transmittance
 
     # Sunshine percentage = 100 * swdown / clear_sky
-    # DrJack returns -999 where sun is below horizon
+    # 0% where sun is below horizon (no sunshine)
     result = np.where(
-        ~sun_up, -999.0,
+        ~sun_up, 0.0,
         np.where(clear_sky > 10.0,
                  100.0 * swdown / clear_sky,
                  50.0))
 
-    # Clamp valid values to 0-100
-    result = np.where(result >= 0.0, np.clip(result, 0.0, 100.0), result)
-
-    return result.astype(np.float32)
+    return np.clip(result, 0.0, 100.0).astype(np.float32)
