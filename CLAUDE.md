@@ -85,7 +85,7 @@ python test_pipeline_e2e.py   # E2E test (downloads real GRIB data)
 
 ### Upload results
 ```bash
-./upload.sh /tmp/results/<run_dir>
+./upload.sh /tmp/results/icon-d2/20260313T03Z
 ```
 
 ## Environment Variables
@@ -93,6 +93,8 @@ python test_pipeline_e2e.py   # E2E test (downloads real GRIB data)
 `START_DAY` (default 0), `OFFSET_HOUR` (init hour UTC, default 0), `TZ_OFFSET` (auto-detected), `GRIB_DIR` (default /tmp/icon_d2_grib), `RESULTS_DIR` (default /tmp/results), `LOG_LEVEL` (default INFO), `UPLOAD_TARGET` (scp target), `SSH_KEY`.
 
 ## Architecture
+
+**Output structure:** `{RESULTS_DIR}/icon-d2/{run_id}/{forecast_date}/` where `run_id` = `YYYYMMDDTHHZ` (model init time) and `forecast_date` = `YYYYMMDD`. Logs at `{run_id}/LOG/`. Idempotent — re-running same params overwrites same directory.
 
 **Data flow:** `run.py` → `pipeline.run_pipeline()` → download → load grid/invariants → process timesteps → write output
 

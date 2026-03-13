@@ -1,6 +1,7 @@
 """Configuration constants for the ICON-D2 soaring weather pipeline."""
 
 REGION = "NL2KMICOND2"
+RUN_MODEL = "icon-d2"
 
 # Domain bounding box for Netherlands soaring area
 NL_BBOX = {

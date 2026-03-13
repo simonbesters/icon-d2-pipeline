@@ -53,6 +53,7 @@ from .config import (
     ICON_D2_NUM_LEVELS,
     PRESSURE_LEVELS,
     REGION,
+    RUN_MODEL,
     TIMESTEPS_LOCAL,
 )
 from .download import build_urls, download_all, get_forecast_hours
@@ -125,11 +126,12 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     """
     t_start = time.time()
 
-    # Construct run prefix
-    now = datetime.now()
-    run_prefix = f"{now.strftime('%Y%m%d_%H%M')}_{REGION}_{start_day}"
-    run_dir = results_dir / run_prefix
-    out_dir = run_dir / "OUT"
+    # Construct deterministic output path from model identity
+    run_id = f"{run_date.strftime('%Y%m%d')}T{init_hour:02d}Z"
+    forecast_dt = run_date + timedelta(days=start_day)
+    forecast_date = forecast_dt.strftime("%Y%m%d")
+    run_dir = results_dir / RUN_MODEL / run_id
+    out_dir = run_dir / forecast_date
     log_dir = run_dir / "LOG"
     out_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -140,8 +142,8 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
 
     tz_id = "CET" if tz_offset == 1 else "CEST"
 
-    logger.info(f"Pipeline start: {REGION} init={init_hour}Z day={start_day}")
-    logger.info(f"Output: {run_dir}")
+    logger.info(f"Pipeline start: {RUN_MODEL} run_id={run_id} forecast={forecast_date}")
+    logger.info(f"Output: {out_dir}")
 
     # ---- Step 1: Download GRIB files ----
     logger.info("Step 1: Downloading ICON-D2 GRIB files...")
