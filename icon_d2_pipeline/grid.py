@@ -2,25 +2,25 @@
 
 import numpy as np
 
-from .config import NL_BBOX
+from .config import COMPUTE_BBOX, OUTPUT_BBOX
 
 
 def find_bbox_indices(lat: np.ndarray, lon: np.ndarray,
                       bbox: dict | None = None) -> tuple[slice, slice]:
-    """Find array index slices for the NL domain bounding box.
+    """Find array index slices for a bounding box.
 
     ICON-D2 regular lat-lon grid has lat decreasing (N->S) and lon increasing (W->E).
 
     Args:
         lat: 1D latitude array (decreasing).
         lon: 1D longitude array (increasing).
-        bbox: Dict with lat_min, lat_max, lon_min, lon_max. Defaults to NL_BBOX.
+        bbox: Dict with lat_min, lat_max, lon_min, lon_max. Defaults to COMPUTE_BBOX.
 
     Returns:
         (lat_slice, lon_slice) for subsetting arrays.
     """
     if bbox is None:
-        bbox = NL_BBOX
+        bbox = COMPUTE_BBOX
 
     # Normalize longitudes to [-180, 360) range for comparison
     # ICON-D2 uses 356.06 to 20.34 (wrapping through 0)
@@ -104,3 +104,28 @@ def get_grid_info(lat: np.ndarray, lon: np.ndarray) -> dict:
         "ny": len(lat),
         "nx": len(lon),
     }
+
+
+def crop_to_output(data: np.ndarray, lats: np.ndarray,
+                   lons: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Crop a 2D array from compute domain to output domain.
+
+    Args:
+        data: 2D array (lat, lon) on the compute grid.
+        lats: 1D latitude array of the compute grid.
+        lons: 1D longitude array of the compute grid.
+
+    Returns:
+        (cropped_data, cropped_lats, cropped_lons)
+    """
+    lat_mask = (lats >= OUTPUT_BBOX["lat_min"]) & (lats <= OUTPUT_BBOX["lat_max"])
+    lon_mask = (lons >= OUTPUT_BBOX["lon_min"]) & (lons <= OUTPUT_BBOX["lon_max"])
+
+    lat_idx = np.where(lat_mask)[0]
+    lon_idx = np.where(lon_mask)[0]
+
+    return (
+        data[lat_idx[0]:lat_idx[-1] + 1, lon_idx[0]:lon_idx[-1] + 1],
+        lats[lat_idx[0]:lat_idx[-1] + 1],
+        lons[lon_idx[0]:lon_idx[-1] + 1],
+    )

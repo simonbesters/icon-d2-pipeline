@@ -51,6 +51,7 @@ from .config import (
     GRIB_ICO_COORD_VARS,
     GRIB_INVARIANT_VARS,
     ICON_D2_NUM_LEVELS,
+    OUTPUT_BBOX,
     PRESSURE_LEVELS,
     REGION,
     RUN_MODEL,
@@ -178,9 +179,18 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
     lon = lon_full[lon_slice]
     grid_info = get_grid_info(lat, lon)
     ny, nx = grid_info["ny"], grid_info["nx"]
-    logger.info(f"Domain: {ny}x{nx} grid points, "
+    logger.info(f"Compute domain: {ny}x{nx} grid points, "
                 f"lat [{grid_info['lat_min']:.2f}, {grid_info['lat_max']:.2f}], "
                 f"lon [{grid_info['lon_min']:.2f}, {grid_info['lon_max']:.2f}]")
+
+    # Compute output crop indices (compute domain -> output domain)
+    out_lat_slice, out_lon_slice = find_bbox_indices(lat, lon, OUTPUT_BBOX)
+    out_lat = lat[out_lat_slice]
+    out_lon = lon[out_lon_slice]
+    out_grid_info = get_grid_info(out_lat, out_lon)
+    logger.info(f"Output domain: {out_grid_info['ny']}x{out_grid_info['nx']} grid points, "
+                f"lat [{out_grid_info['lat_min']:.2f}, {out_grid_info['lat_max']:.2f}], "
+                f"lon [{out_grid_info['lon_min']:.2f}, {out_grid_info['lon_max']:.2f}]")
 
     # Load terrain height (HSURF)
     ter = load_invariant_field(grib_dir, date_init, "hsurf", lat_slice, lon_slice)
@@ -455,11 +465,14 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         # Terrain height (wrf=HGT)
         results["wrf=HGT"] = ter.astype(np.float32)
 
-        # ---- Write output files ----
+        # ---- Crop to output domain and write output files ----
         for param_name, data in results.items():
             # Skip auxiliary fields
             if param_name.endswith("_u") or param_name.endswith("_v"):
                 continue
+
+            # Crop from compute domain to output domain
+            out_data = data[out_lat_slice, out_lon_slice]
 
             # Determine data format
             ldatafmt = 2 if param_name == "rain1" else 0
@@ -467,22 +480,22 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             # Write .data file
             data_filename = get_data_filename(param_name, ts_local)
             data_path = out_dir / data_filename
-            write_data_file(data_path, param_name, data, grid_info,
+            write_data_file(data_path, param_name, out_data, out_grid_info,
                             valid_dt, forecast_str, init_hour, tz_id, ldatafmt)
 
             # Write GeoTIFF
-            scaled = data * _get_param_mult(param_name)
+            scaled = out_data * _get_param_mult(param_name)
             tiff_path = data_path.with_suffix(".data.tiff")
-            write_geotiff(tiff_path, scaled, lat, lon)
+            write_geotiff(tiff_path, scaled, out_lat, out_lon)
 
             # Write .title.json
             json_filename = get_json_filename(param_name, ts_local)
             json_path = out_dir / json_filename
-            write_title_json(json_path, param_name, data, valid_dt,
+            write_title_json(json_path, param_name, out_data, valid_dt,
                              forecast_str, init_hour, tz_id)
 
             # Write PNGs (body, head, foot, side) for web viewer
-            write_pngs(data, param_name, ts_local, out_dir, valid_dt,
+            write_pngs(out_data, param_name, ts_local, out_dir, valid_dt,
                         forecast_str, init_hour, tz_id,
                         mult=_get_param_mult(param_name))
 
@@ -492,19 +505,19 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
             u_key = f"{param_name}_u"
             v_key = f"{param_name}_v"
             if u_key in results and v_key in results:
-                # Wind direction
-                u_p = results[u_key]
-                v_p = results[v_key]
+                # Crop u/v to output domain, then compute wdir/wspd
+                u_p = results[u_key][out_lat_slice, out_lon_slice]
+                v_p = results[v_key][out_lat_slice, out_lon_slice]
+
                 wdir = 180.0 + np.degrees(np.arctan2(u_p, v_p))
                 wdir_filename = f"{param_name}wdir.curr.{ts_local}lst.d2.data"
                 write_data_file(out_dir / wdir_filename, f"{param_name}wdir",
-                                wdir, grid_info, valid_dt, forecast_str, init_hour, tz_id)
+                                wdir, out_grid_info, valid_dt, forecast_str, init_hour, tz_id)
 
-                # Wind speed
                 wspd = np.sqrt(u_p**2 + v_p**2)
                 wspd_filename = f"{param_name}wspd.curr.{ts_local}lst.d2.data"
                 write_data_file(out_dir / wspd_filename, f"{param_name}wspd",
-                                wspd, grid_info, valid_dt, forecast_str, init_hour, tz_id)
+                                wspd, out_grid_info, valid_dt, forecast_str, init_hour, tz_id)
 
     # Shutdown ProcessPoolExecutor
     if executor is not None:
@@ -527,14 +540,14 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
 
     for param_name, pfd_data in pfd_results.items():
         if pfd_data is not None:
-            # Write with timestep (standard format)
+            # PFD reads from already-cropped .data files, so it's on output domain
             data_filename = get_data_filename(param_name, last_ts)
             write_data_file(out_dir / data_filename, param_name, pfd_data,
-                            grid_info, last_valid_dt, str(forecast_hours[-1]),
+                            out_grid_info, last_valid_dt, str(forecast_hours[-1]),
                             init_hour, tz_id)
 
             tiff_path = (out_dir / data_filename).with_suffix(".data.tiff")
-            write_geotiff(tiff_path, pfd_data, lat, lon)
+            write_geotiff(tiff_path, pfd_data, out_lat, out_lon)
 
             json_filename = get_json_filename(param_name, last_ts)
             write_title_json(out_dir / json_filename, param_name, pfd_data,
@@ -547,7 +560,7 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
 
             # Also write without timestep (viewer expects pfd_tot.body.png)
             write_data_file(out_dir / f"{param_name}.data", param_name,
-                            pfd_data, grid_info, last_valid_dt,
+                            pfd_data, out_grid_info, last_valid_dt,
                             str(forecast_hours[-1]), init_hour, tz_id)
             write_title_json(out_dir / f"{param_name}.title.json",
                              param_name, pfd_data, last_valid_dt,

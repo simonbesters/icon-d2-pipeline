@@ -130,7 +130,12 @@ CONTOUR_PARAMS = {
     "pfd_tot3":     (100, 900, 100),
 }
 # Explicit (non-uniform) contour levels per parameter
+# PFD: 10 bins matching 10 colors from pfd.rgb (NCL convention: below + 8 intervals + above)
+_PFD_LEVELS = np.array([0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000])
 EXPLICIT_LEVELS = {
+    "pfd_tot":  _PFD_LEVELS,
+    "pfd_tot2": _PFD_LEVELS,
+    "pfd_tot3": _PFD_LEVELS,
     "rain1": np.array([0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0,
                         15.0, 20.0, 25.0, 30.0, 35.0]),
 }

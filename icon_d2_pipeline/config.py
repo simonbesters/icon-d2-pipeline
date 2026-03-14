@@ -3,12 +3,20 @@
 REGION = "NL2KMICOND2"
 RUN_MODEL = "icon-d2"
 
-# Domain bounding box for Netherlands soaring area
-NL_BBOX = {
+# Compute domain: area for downloading and all calculations (~2° buffer around output)
+COMPUTE_BBOX = {
+    "lat_min": 47.5,
+    "lat_max": 56.0,
+    "lon_min": -1.0,
+    "lon_max": 15.0,
+}
+
+# Output domain: area for final output (what the viewer shows)
+OUTPUT_BBOX = {
     "lat_min": 49.0,
-    "lat_max": 54.5,
-    "lon_min": 2.0,
-    "lon_max": 12.0,
+    "lat_max": 55.0,
+    "lon_min": 1.5,
+    "lon_max": 12.5,
 }
 
 # DWD open data base URL for ICON-D2
