@@ -141,7 +141,7 @@ EXPLICIT_LEVELS = {
 }
 # Pressure level params
 for _p in [955, 899, 846, 795, 701, 616, 540]:
-    CONTOUR_PARAMS[f"press{_p}"] = (0, 0, 2)
+    CONTOUR_PARAMS[f"press{_p}"] = (-300, 300, 25)
     CONTOUR_PARAMS[f"press{_p}wdir"] = (0, 360, 30)
     CONTOUR_PARAMS[f"press{_p}wspd"] = (0, 0, 2)
 
@@ -278,8 +278,8 @@ def _compute_levels(param_name: str, data: np.ndarray, mult: float) -> tuple:
         # PFD uses custom colormap
         colors = _PFD_COLORS[:n_bins] if n_bins <= len(_PFD_COLORS) else \
             _PFD_COLORS[np.linspace(0, len(_PFD_COLORS) - 1, n_bins).astype(int)]
-    elif param_name == "wblmaxmin":
-        # Convergence uses press26 diverging colormap
+    elif param_name == "wblmaxmin" or (param_name.startswith("press") and not param_name.endswith(("wdir", "wspd"))):
+        # Convergence and pressure-level wave params use press26 diverging colormap
         colors = _PRESS26_COLORS[:n_bins] if n_bins <= len(_PRESS26_COLORS) else \
             _PRESS26_COLORS[np.linspace(0, len(_PRESS26_COLORS) - 1, n_bins).astype(int)]
     else:
@@ -522,7 +522,8 @@ def render_side(levels: np.ndarray, colors: np.ndarray,
 # ---------------------------------------------------------------------------
 def write_pngs(data: np.ndarray, param_name: str, ts_local: str,
                out_dir: Path, valid_dt, forecast_str: str,
-               init_hour: int, tz_id: str, mult: float = 1.0):
+               init_hour: int, tz_id: str, mult: float = 1.0,
+               lat_range: tuple = (49.0, 55.0)):
     """Generate body/head/foot/side PNGs for a parameter at one timestep.
 
     Args:
@@ -546,7 +547,7 @@ def write_pngs(data: np.ndarray, param_name: str, ts_local: str,
     base = f"{param_name}.curr.{ts_local}lst.d2"
 
     # Body
-    body = render_body(scaled, levels, colors)
+    body = render_body(scaled, levels, colors, lat_range=lat_range)
     body.save(out_dir / f"{base}.body.png", optimize=True)
 
     # Head

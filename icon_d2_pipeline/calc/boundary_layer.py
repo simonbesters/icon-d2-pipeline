@@ -254,3 +254,46 @@ def _interp_to_height(ua: np.ndarray, va: np.ndarray, z: np.ndarray,
         v_result = np.where(found, v_result, va[-1])
 
     return u_result.astype(np.float32), v_result.astype(np.float32)
+
+
+def calc_pblh_bulk_ri(theta, ua, va, z, ter,
+                      ri_crit=0.25, mh_fallback=None):
+    """Calculate PBL height using bulk Richardson number method.
+
+    Similar to WRF YSU scheme: finds lowest level where bulk Ri exceeds
+    the critical threshold. Gives deeper BL heights than ICON MH (TKE-based)
+    for convective conditions.
+
+    Args:
+        theta: Potential temperature (level, lat, lon), bottom-up, K.
+        ua: U-wind component (level, lat, lon), bottom-up, m/s.
+        va: V-wind component (level, lat, lon), bottom-up, m/s.
+        z: Heights MSL (level, lat, lon), bottom-up.
+        ter: Terrain height MSL (lat, lon).
+        ri_crit: Critical bulk Richardson number (default 0.25).
+        mh_fallback: Optional fallback PBL height AGL where Ri method fails.
+
+    Returns:
+        PBL height AGL (m), 2D array.
+    """
+    import numpy as np
+    nz, ny, nx = theta.shape
+    g = 9.81
+    theta_sfc = theta[0]
+    pblh = np.full((ny, nx), 100.0, dtype=np.float32)
+    found = np.zeros((ny, nx), dtype=bool)
+
+    for k in range(1, nz):
+        agl = z[k] - ter
+        dtheta = theta[k] - theta_sfc
+        ws2 = ua[k] ** 2 + va[k] ** 2 + 1e-6
+        ri_b = g * agl * dtheta / (theta_sfc * ws2)
+
+        new_found = (~found) & (ri_b > ri_crit) & (agl > 50.0)
+        pblh = np.where(new_found, agl, pblh)
+        found = found | new_found
+
+    if mh_fallback is not None:
+        pblh = np.where(found, pblh, np.maximum(mh_fallback, 100.0))
+
+    return np.maximum(pblh, 100.0).astype(np.float32)

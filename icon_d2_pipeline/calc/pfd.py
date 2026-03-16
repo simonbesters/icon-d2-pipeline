@@ -4,7 +4,7 @@ Runs AFTER all other parameters are written as .data files for all timesteps.
 Reads .data files, applies glider polar and weather corrections, sums distances.
 
 Three variants:
-- pfd_tot:  Simple LS-4, wstar only
+- pfd_tot:  LS-8 (modern standard class) + weather corrections
 - pfd_tot2: Enhanced LS-4 + weather corrections
 - pfd_tot3: Same as pfd_tot2 but ASG-29E polar
 """
@@ -19,10 +19,6 @@ from ..config import (
     GLIDER_POLARS,
     PFD_BLUE_THERMAL_MIN_AGL,
     PFD_CU_CLOUDBASE_MIN_AGL,
-    PFD_SIMPLE_A,
-    PFD_SIMPLE_B,
-    PFD_SIMPLE_C,
-    PFD_SIMPLE_SRIT,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,60 +74,8 @@ def _read_data_file_float(filepath: Path) -> np.ndarray | None:
 
 
 def compute_pfd_tot(out_dir: Path) -> np.ndarray | None:
-    """Compute simple PFD using hardcoded NCL polar coefficients and wstar only.
-
-    Matches the pfd() function in calc_funcs.ncl exactly:
-    - Uses hardcoded polar coefficients (not derived from glider spec)
-    - Uses sink rate = 1.15 m/s (not from glider polar)
-    - No wing-loading adjustment
-    - Closed-form speed-to-fly formula
-    """
-    a = PFD_SIMPLE_A
-    b = PFD_SIMPLE_B
-    c = PFD_SIMPLE_C
-
-    # Find all wstar data files, sorted by time
-    wstar_files = sorted(glob.glob(str(out_dir / "wstar.curr.*lst.d2.data")))
-    if not wstar_files:
-        logger.error("No wstar data files found for PFD calculation")
-        return None
-
-    # Check for half-hour data
-    half_hour_files = sorted(glob.glob(str(out_dir / "wstar.curr.*30lst.d2.data")))
-    divisor = 2 if half_hour_files else 1
-
-    # Read first file to get dimensions
-    first = _read_data_file(Path(wstar_files[0]))
-    if first is None:
-        return None
-    ny, nx = first.shape
-
-    pfdtot = np.zeros((ny, nx), dtype=np.float64)
-
-    # Process all files except the last (last time step excluded, as in NCL code)
-    for filepath in wstar_files[:-1]:
-        wstar = _read_data_file(Path(filepath))
-        if wstar is None:
-            continue
-
-        # wstar is in cm/s (metric), convert to m/s and subtract sink rate
-        wssel = wstar / 100.0 - PFD_SIMPLE_SRIT
-        wssel = np.maximum(wssel, 0.0)
-
-        # NCL closed-form: dist = (wssel * sqrt((c - wssel) / a)) /
-        #                         (2*wssel - 2*c - b*sqrt((c-wssel)/a)) / divisor
-        sqrt_term = np.sqrt(np.maximum((c - wssel) / a, 0.0))
-        denom = 2.0 * wssel - 2.0 * c - b * sqrt_term
-
-        v_avg = np.zeros_like(wssel)
-        valid = (wssel > 0.0) & (np.abs(denom) > 0.01)
-        v_avg[valid] = (wssel[valid] * sqrt_term[valid] /
-                        denom[valid]) / divisor
-
-        pfdtot += v_avg
-        pfdtot = pfdtot.astype(int).astype(np.float64)  # Truncate as in NCL
-
-    return pfdtot.astype(np.float32)
+    """Compute PFD using LS-8 (modern standard class) polar with weather corrections."""
+    return _compute_pfd_enhanced(out_dir, "LS-8")
 
 
 def compute_pfd_tot2(out_dir: Path) -> np.ndarray | None:

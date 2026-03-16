@@ -21,6 +21,7 @@ from .calc.boundary_layer import (
     calc_blwinddiff,
     calc_bltopwind,
     calc_wblmaxmin,
+    calc_pblh_bulk_ri,
 )
 from .calc.cape import calc_cape
 from .calc.cloud import (
@@ -627,7 +628,7 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         # ICON-D2 ASHFL_S/ALHFL_S are time-means over [0, fh].
         # Instantaneous ≈ fh * mean(0,fh) - (fh-1) * mean(0,fh-1)
         if fh > 0:
-            for flux_var in ["ASHFL_S", "ALHFL_S"]:
+            for flux_var in ["ASHFL_S", "ALHFL_S", "ASWDIR_S", "ASWDIFD_S"]:
                 if flux_var in raw_2d:
                     try:
                         prev = load_2d_field(grib_dir, date_init, fh - 1,
@@ -680,9 +681,17 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         # Derive 3D fields
         fields_3d = compute_derived_3d(raw_3d, raw_2d)
 
-        # PBL height from ICON-D2 mixing height (MH)
-        pblh = raw_2d.get("MH", None)
-        if pblh is None:
+        # PBL height: prefer bulk Richardson method (like WRF YSU) over ICON MH
+        mh = raw_2d.get("MH", None)
+        theta = fields_3d.get("theta", None)
+        ua_3d = fields_3d.get("U", None) or raw_3d.get("U", None)
+        va_3d = fields_3d.get("V", None) or raw_3d.get("V", None)
+        if theta is not None and ua_3d is not None and va_3d is not None:
+            pblh = calc_pblh_bulk_ri(theta, ua_3d, va_3d, z, ter,
+                                     mh_fallback=mh)
+        elif mh is not None:
+            pblh = mh
+        else:
             pblh = _estimate_pblh(fields_3d, z, ter)
 
         result = {

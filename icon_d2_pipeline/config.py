@@ -51,7 +51,17 @@ MAX_CWBASE_M = 5486.40
 # Glider polars from XCSoar polar store
 # https://github.com/XCSoar/XCSoar/blob/master/src/Polar/PolarStore.cpp
 GLIDER_POLARS = {
-    # LS-4 used for pfd_tot and pfd_tot2
+    # LS-8 (modern standard class, 15m) used for pfd_tot
+    "LS-8": {
+        "mdg": 325,  # MassDryGross (kg)
+        "v1": 100, "w1": -0.59,
+        "v2": 130, "w2": -0.84,
+        "v3": 160, "w3": -1.42,
+        "pilot_weight": 80,  # kg including chute
+        "water_ballast": 0,  # kg (dry)
+        "sink_rate_turn": 0.8,  # m/s - better than LS-4 in thermals
+    },
+    # LS-4 (classic standard class) used for pfd_tot2
     "LS-4": {
         "mdg": 361,  # MassDryGross (kg)
         "v1": 100, "w1": -0.69,
@@ -77,12 +87,6 @@ GLIDER_POLARS = {
 PFD_CU_CLOUDBASE_MIN_AGL = 600  # m - zero wstar if cu cloudbase AGL < this
 PFD_BLUE_THERMAL_MIN_AGL = 800  # m - zero wstar if blue thermals AGL < this
 
-# PFD simple (pfd_tot) hardcoded polar coefficients from calc_funcs.ncl pfd()
-# These are NOT derived from the glider polar — they are the NCL reference values.
-PFD_SIMPLE_A = -0.000302016415111608
-PFD_SIMPLE_B = 0.0729181700942301
-PFD_SIMPLE_C = -5.21488508245734
-PFD_SIMPLE_SRIT = 1.15  # m/s — NCL hardcoded sink rate (not from glider polar)
 
 # Pressure levels for output interpolation (hPa) — for press955..press540 params
 PRESSURE_LEVELS = [955, 899, 846, 795, 701, 616, 540]

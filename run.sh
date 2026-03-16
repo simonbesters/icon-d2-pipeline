@@ -28,6 +28,16 @@ echo "  Start day:  $START_DAY"
 echo "  TZ offset:  $TZ_OFFSET"
 echo "  Output dir: $RUN_DIR"
 
+# Clean up GRIB files from previous runs (keep only current run)
+CURRENT_PREFIX="icon-d2_${RUN_DATE}$(printf %02d "$OFFSET_HOUR")"
+if [ -d "$GRIB_DIR" ]; then
+    OLD_COUNT=$(find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" 2>/dev/null | wc -l)
+    if [ "$OLD_COUNT" -gt 0 ]; then
+        echo "  Cleaning $OLD_COUNT old GRIB files from $GRIB_DIR..."
+        find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" -delete
+    fi
+fi
+
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -v "$RESULTS_DIR":"$RESULTS_DIR" \
