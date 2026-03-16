@@ -296,18 +296,26 @@ def _compute_levels(param_name: str, data: np.ndarray, mult: float) -> tuple:
 # Body PNG rendering
 # ---------------------------------------------------------------------------
 def render_body(data: np.ndarray, levels: np.ndarray,
-                colors: np.ndarray) -> Image.Image:
-    """Render the data grid as a colored RGBA image.
+                colors: np.ndarray,
+                lat_range: tuple = (49.0, 55.0)) -> Image.Image:
+    """Render the data grid as a colored RGBA image in Mercator projection.
+
+    The input data is on a regular lat/lon grid (plate carree), but MapLibre
+    displays images in Web Mercator. We resample rows to Mercator spacing
+    so the overlay aligns correctly with the base map.
 
     Args:
         data: 2D array (ny, nx) of values (already scaled by mult).
         levels: 1D array of contour level boundaries.
         colors: (N, 3) array of RGB colors for each bin.
+        lat_range: (lat_min, lat_max) of the data grid.
 
     Returns:
-        PIL Image in RGBA mode.
+        PIL Image in RGBA mode (Mercator-projected).
     """
     ny, nx = data.shape
+    lat_min, lat_max = lat_range
+
     # Mask NaN / fill values
     nodata = np.isnan(data) | (data <= -999000)
     clean = np.where(nodata, 0, data)
@@ -322,6 +330,25 @@ def render_body(data: np.ndarray, levels: np.ndarray,
     # Flip vertically: data row 0 = south, image row 0 = top (north)
     rgb = rgb[::-1]
     nodata = nodata[::-1]
+
+    # --- Reproject from plate carree to Mercator ---
+    # Mercator y for the bounds
+    y_max = np.log(np.tan(np.pi / 4 + np.radians(lat_max) / 2))
+    y_min = np.log(np.tan(np.pi / 4 + np.radians(lat_min) / 2))
+
+    # Target: evenly spaced Mercator y values (top=north to bottom=south)
+    merc_y = np.linspace(y_max, y_min, ny)
+    # Convert back to latitude
+    merc_lats = np.degrees(2 * np.arctan(np.exp(merc_y)) - np.pi / 2)
+
+    # Map each target row to a source row in the flipped plate carree image
+    # In flipped image: row 0 = lat_max, row ny-1 = lat_min
+    src_rows = (lat_max - merc_lats) / (lat_max - lat_min) * (ny - 1)
+    src_rows = np.clip(src_rows, 0, ny - 1).astype(int)
+
+    # Resample
+    rgb = rgb[src_rows]
+    nodata = nodata[src_rows]
 
     # Create RGBA — transparent where no data
     rgba = np.zeros((ny, nx, 4), dtype=np.uint8)

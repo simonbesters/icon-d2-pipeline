@@ -1,24 +1,24 @@
 #!/bin/bash
-# Run ICON-D2 pipeline and optionally upload results.
+# Run ICON-D2 pipeline and promote results to /data/rasp/latest/.
 #
 # Usage:
 #   ./run.sh                    # Run for today, init 0Z
 #   ./run.sh 6                  # Run for today, init 6Z
 #   START_DAY=1 ./run.sh        # Run for tomorrow
 #
-# Set UPLOAD_TARGET to auto-upload after run.
+# Set UPLOAD_TARGET to auto-upload after run (for remote setups).
 
 set -euo pipefail
 
 START_DAY="${START_DAY:-0}"
 OFFSET_HOUR="${1:-0}"
 TZ_OFFSET="${TZ_OFFSET:-1}"
-RESULTS_DIR="${RESULTS_DIR:-/tmp/results}"
+RESULTS_DIR="${RESULTS_DIR:-/data/rasp}"
 GRIB_DIR="${GRIB_DIR:-/tmp/icon_d2_grib}"
 
 # Compute deterministic run_id from model init time
 RUN_DATE=$(date -u +%Y%m%d)
-RUN_ID="${RUN_DATE}T$(printf '%02d' "$OFFSET_HOUR")Z"
+RUN_ID="${RUN_DATE}T$(printf %02d "$OFFSET_HOUR")Z"
 RUN_DIR="$RESULTS_DIR/icon-d2/$RUN_ID"
 
 echo "=== ICON-D2 Pipeline ==="
@@ -32,6 +32,7 @@ docker run --rm \
     --user "$(id -u):$(id -g)" \
     -v "$RESULTS_DIR":"$RESULTS_DIR" \
     -v "$GRIB_DIR":"$GRIB_DIR" \
+    -v /root/icon-d2-pipeline/icon_d2_pipeline:/app/icon_d2_pipeline \
     -e START_DAY="$START_DAY" \
     -e OFFSET_HOUR="$OFFSET_HOUR" \
     -e TZ_OFFSET="$TZ_OFFSET" \
@@ -54,7 +55,13 @@ for FDIR in "$RUN_DIR"/[0-9]*/; do
     echo "  $FDATE: $FCOUNT files"
 done
 
-# Upload if configured
+# Promote to /data/rasp/latest/ and update manifest
+/data/rasp/scripts/promote.sh icon-d2 "$RUN_ID"
+
+# Update legacy NL+x-ICOND2PY symlinks for backward compatibility
+/root/blipmaps.nl/cron/update-symlinks.sh
+
+# Upload if configured (for remote setups)
 if [ -n "${UPLOAD_TARGET:-}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     "$SCRIPT_DIR/upload.sh" "$RUN_DIR"
