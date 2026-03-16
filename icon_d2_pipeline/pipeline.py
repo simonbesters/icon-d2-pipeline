@@ -684,8 +684,12 @@ def _load_fields_for_hour(grib_dir: Path, date_init: str, fh: int,
         # PBL height: prefer bulk Richardson method (like WRF YSU) over ICON MH
         mh = raw_2d.get("MH", None)
         theta = fields_3d.get("theta", None)
-        ua_3d = fields_3d.get("U", None) or raw_3d.get("U", None)
-        va_3d = fields_3d.get("V", None) or raw_3d.get("V", None)
+        ua_3d = fields_3d.get("U", None)
+        if ua_3d is None:
+            ua_3d = raw_3d.get("U", None)
+        va_3d = fields_3d.get("V", None)
+        if va_3d is None:
+            va_3d = raw_3d.get("V", None)
         if theta is not None and ua_3d is not None and va_3d is not None:
             pblh = calc_pblh_bulk_ri(theta, ua_3d, va_3d, z, ter,
                                      mh_fallback=mh)
