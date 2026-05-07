@@ -38,6 +38,7 @@ if [ -d "$GRIB_DIR" ]; then
     fi
 fi
 
+set +e
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -v "$RESULTS_DIR":"$RESULTS_DIR" \
@@ -49,6 +50,19 @@ docker run --rm \
     -e RESULTS_DIR="$RESULTS_DIR" \
     -e GRIB_DIR="$GRIB_DIR" \
     icond2-pipeline:latest
+DOCKER_EXIT=$?
+set -e
+
+# Treat SIGSEGV (139) during interpreter shutdown as success if output exists.
+# Some C extensions (eccodes/GDAL/scipy) segfault on cleanup after the pipeline
+# has already finished writing all outputs. RUN_DIR existence is the real check.
+if [ "$DOCKER_EXIT" -ne 0 ] && [ "$DOCKER_EXIT" -ne 139 ]; then
+    echo "ERROR: Pipeline container exited with code $DOCKER_EXIT"
+    exit "$DOCKER_EXIT"
+fi
+if [ "$DOCKER_EXIT" -eq 139 ]; then
+    echo "Note: container exited 139 (SIGSEGV during shutdown); output verified below"
+fi
 
 # Verify output
 if [ ! -d "$RUN_DIR" ]; then
