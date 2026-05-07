@@ -17,8 +17,10 @@ import numpy as np
 
 from ..config import (
     GLIDER_POLARS,
+    PFD_BLUE_PBLH_MIN_AGL,
     PFD_BLUE_THERMAL_MIN_AGL,
     PFD_CU_CLOUDBASE_MIN_AGL,
+    PFD_STRATEGY,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,51 @@ def _read_data_file(filepath: Path) -> np.ndarray | None:
         return None
 
 
+def _apply_pfd_thresholds(wstar: np.ndarray, hgt: np.ndarray | None,
+                          zdif: np.ndarray | None, out_dir: Path,
+                          tail: str) -> np.ndarray:
+    """Zero out wstar where atmosphere is too marginal for soaring.
+
+    Strategy is selected via config.PFD_STRATEGY. See config.py for semantics.
+    Returns wstar unchanged if required inputs are missing.
+    """
+    if hgt is None or zdif is None:
+        return wstar
+
+    cu_present = zdif > 0
+
+    if PFD_STRATEGY == "raspgm":
+        hbl = _read_data_file(out_dir / f"hbl{tail}")
+        if hbl is None:
+            return wstar
+        pblh_agl = hbl - hgt
+        kill = (~cu_present) & (pblh_agl < PFD_BLUE_PBLH_MIN_AGL)
+        return np.where(kill, 0, wstar)
+
+    if PFD_STRATEGY == "tonino":
+        zmask = _read_data_file(out_dir / f"zsfclclmask{tail}")
+        exper = _read_data_file(out_dir / f"experimental1{tail}")
+        if zmask is None or exper is None:
+            return wstar
+        cu_low = (zmask - hgt) < PFD_CU_CLOUDBASE_MIN_AGL
+        blue_low = (exper - hgt) < PFD_BLUE_THERMAL_MIN_AGL
+        wstar = np.where(cu_present & cu_low, 0, wstar)
+        wstar = np.where((~cu_present) & blue_low, 0, wstar)
+        return wstar
+
+    if PFD_STRATEGY == "softfade":
+        zmask = _read_data_file(out_dir / f"zsfclclmask{tail}")
+        exper = _read_data_file(out_dir / f"experimental1{tail}")
+        if zmask is None or exper is None:
+            return wstar
+        cu_factor = np.clip((zmask - hgt - (PFD_CU_CLOUDBASE_MIN_AGL - 200)) / 200.0, 0.0, 1.0)
+        blue_factor = np.clip((exper - hgt - (PFD_BLUE_THERMAL_MIN_AGL - 200)) / 200.0, 0.0, 1.0)
+        factor = np.where(cu_present, cu_factor, blue_factor)
+        return wstar * factor
+
+    raise ValueError(f"Unknown PFD_STRATEGY: {PFD_STRATEGY!r}")
+
+
 def _read_data_file_float(filepath: Path) -> np.ndarray | None:
     """Read float grid data from a .data file (skip 4-line header)."""
     if not filepath.exists():
@@ -81,21 +128,18 @@ def compute_pfd_tot(out_dir: Path) -> np.ndarray | None:
 def compute_pfd_tot2(out_dir: Path) -> np.ndarray | None:
     """Compute enhanced PFD using LS-4 polar with weather corrections.
 
-    Matches the pfd2() function in calc_funcs.ncl.
-    Weather corrections:
-    - Zero wstar if cu cloudbase AGL < 600m
-    - Zero wstar if blue thermal AGL < 800m
-    - Zero wstar if rain > 0
+    Threshold strategy is configurable via config.PFD_STRATEGY.
+    Always applied:
+    - Zero wstar where rain > 0
     - Scale by sunshine: linear 100% at sunpct=50% down to 0% at sunpct=0%
     """
     return _compute_pfd_enhanced(out_dir, "LS-4")
 
 
 def compute_pfd_tot3(out_dir: Path) -> np.ndarray | None:
-    """Compute enhanced PFD using ASG-29E polar with weather corrections.
+    """Compute enhanced PFD using ASG-29E polar.
 
     Same as pfd_tot2 but with ASG-29E glider polar.
-    Matches the pfd3() function in calc_funcs.ncl.
     """
     return _compute_pfd_enhanced(out_dir, "ASG-29E")
 
@@ -135,24 +179,13 @@ def _compute_pfd_enhanced(out_dir: Path, glider_name: str) -> np.ndarray | None:
         if wstar is None:
             continue
 
-        # Load weather correction data
-        zmask = _read_data_file(out_dir / f"zsfclclmask{tail}")
+        # Load weather correction data shared across strategies
         hgt = _read_data_file(out_dir / f"wrf=HGT{tail}")
-        exper = _read_data_file(out_dir / f"experimental1{tail}")
         zdif = _read_data_file(out_dir / f"zsfclcldif{tail}")
         sunpct = _read_data_file(out_dir / f"sfcsunpct{tail}")
         rainmm = _read_data_file_float(out_dir / f"rain1{tail}")
 
-        # Apply weather corrections to wstar
-        if zdif is not None and zmask is not None and hgt is not None and exper is not None:
-            # Where cumulus exists (zdif > 0): zero wstar if cloudbase AGL < 600m
-            # Where blue (zdif <= 0): zero wstar if thermal height AGL < 800m
-            cu_present = zdif > 0
-            cu_low = (zmask - hgt) < PFD_CU_CLOUDBASE_MIN_AGL
-            blue_low = (exper - hgt) < PFD_BLUE_THERMAL_MIN_AGL
-
-            wstar = np.where(cu_present & cu_low, 0, wstar)
-            wstar = np.where((~cu_present) & blue_low, 0, wstar)
+        wstar = _apply_pfd_thresholds(wstar, hgt, zdif, out_dir, tail)
 
         if rainmm is not None:
             wstar = np.where(rainmm > 0, 0, wstar)

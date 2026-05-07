@@ -83,9 +83,24 @@ GLIDER_POLARS = {
     },
 }
 
-# PFD weather corrections thresholds (from calc_funcs.ncl:677-679)
-PFD_CU_CLOUDBASE_MIN_AGL = 600  # m - zero wstar if cu cloudbase AGL < this
-PFD_BLUE_THERMAL_MIN_AGL = 800  # m - zero wstar if blue thermals AGL < this
+# PFD weather corrections strategy.
+# Determines when wstar is zeroed in pfd_tot2 / pfd_tot3.
+#
+#   "raspgm"   — rasp-gm-master pfd3 (neenjaw): wstar=0 only if BL is shallow AND blue
+#                (pblh < PFD_BLUE_PBLH_MIN_AGL AND no Cu). Cu zones are never clipped.
+#                Less strict; better fit for ICON-D2's shallower BL on marginal days.
+#   "tonino"   — blipmaps.nl Tonino variant (= what review/rasp/GM does):
+#                wstar=0 if Cu cloudbase < PFD_CU_CLOUDBASE_MIN_AGL  (Cu path)
+#                or thermal height < PFD_BLUE_THERMAL_MIN_AGL        (blue path).
+#                Strict; cliff-edge behavior on ICON-D2.
+#   "softfade" — linear fade between PFD_*_MIN_AGL bounds instead of binary cutoff.
+#                Pragmatic in-between option.
+PFD_STRATEGY = "raspgm"
+
+# Strategy thresholds (m AGL)
+PFD_BLUE_PBLH_MIN_AGL = 900       # raspgm: pblh below this AND blue → wstar=0
+PFD_CU_CLOUDBASE_MIN_AGL = 600    # tonino/softfade: Cu cloudbase below this → wstar=0
+PFD_BLUE_THERMAL_MIN_AGL = 800    # tonino/softfade: blue thermal height below this → wstar=0
 
 
 # Pressure levels for output interpolation (hPa) — for press955..press540 params
