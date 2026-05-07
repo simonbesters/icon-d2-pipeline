@@ -79,11 +79,48 @@ for FDIR in "$RUN_DIR"/[0-9]*/; do
     echo "  $FDATE: $FCOUNT files"
 done
 
-# Promote to /data/rasp/latest/ and update manifest
-/data/rasp/scripts/promote.sh icon-d2 "$RUN_ID"
+# Promote to /data/rasp/latest/ and update manifest.
+# A later init hour (e.g. 15Z) cannot retro-forecast morning timesteps for
+# "today", so its forecast_date dir for today contains only stub files.
+# Don't downgrade an earlier complete run with a later partial one — only
+# overwrite the latest symlink if the new run has at least as many files.
+LATEST_DIR="$RESULTS_DIR/latest/icon-d2"
+mkdir -p "$LATEST_DIR"
 
-# Update legacy NL+x-ICOND2PY symlinks for backward compatibility
-/root/blipmaps.nl/cron/update-symlinks.sh
+promoted=0
+skipped=0
+for FORECAST_DIR in "$RUN_DIR"/[0-9]*/; do
+    [ -d "$FORECAST_DIR" ] || continue
+    FORECAST_DATE=$(basename "$FORECAST_DIR")
+    [[ "$FORECAST_DATE" =~ ^[0-9]{8}$ ]] || continue
+
+    LATEST_LINK="$LATEST_DIR/$FORECAST_DATE"
+    NEW_FILES=$(find "$FORECAST_DIR" -type f 2>/dev/null | wc -l)
+
+    if [ -L "$LATEST_LINK" ]; then
+        CURRENT_TARGET=$(readlink -f "$LATEST_LINK")
+        if [ -d "$CURRENT_TARGET" ]; then
+            CUR_FILES=$(find "$CURRENT_TARGET" -type f 2>/dev/null | wc -l)
+            if [ "$NEW_FILES" -lt "$CUR_FILES" ]; then
+                echo "  Skip $FORECAST_DATE: new run has $NEW_FILES files, current latest has $CUR_FILES"
+                skipped=$((skipped + 1))
+                continue
+            fi
+        fi
+    fi
+
+    ln -sfn "../../icon-d2/$RUN_ID/$FORECAST_DATE" "${LATEST_LINK}.tmp"
+    mv -Tf "${LATEST_LINK}.tmp" "$LATEST_LINK"
+    echo "  Promoted $FORECAST_DATE -> $RUN_ID ($NEW_FILES files)"
+    promoted=$((promoted + 1))
+done
+
+echo "Promoted $promoted forecast dates ($skipped skipped)"
+
+# Refresh manifest.json (used by the viewer to discover available dates/runs)
+if [ -x "$RESULTS_DIR/scripts/update_manifest.sh" ]; then
+    "$RESULTS_DIR/scripts/update_manifest.sh"
+fi
 
 # Upload if configured (for remote setups)
 if [ -n "${UPLOAD_TARGET:-}" ]; then
