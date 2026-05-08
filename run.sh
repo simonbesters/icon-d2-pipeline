@@ -94,43 +94,56 @@ for FDIR in "$RUN_DIR"/[0-9]*/; do
     echo "  $FDATE: $FCOUNT files"
 done
 
-# Promote to /data/rasp/latest/ and update manifest.
-# A later init hour (e.g. 15Z) cannot retro-forecast morning timesteps for
-# "today", so its forecast_date dir for today contains only stub files.
-# Don't downgrade an earlier complete run with a later partial one — only
-# overwrite the latest symlink if the new run has at least as many files.
+# Promote to /data/rasp/latest/icon-d2/$DATE/ via per-file symlinks.
+# Iterating runs newest-first, each output file links to the freshest run
+# that produced it. Lets a partial late-init run (e.g. 12Z afternoon)
+# update the timesteps it produced while older complete runs (e.g. 06Z)
+# keep their morning timesteps.
 LATEST_DIR="$RESULTS_DIR/latest/icon-d2"
 mkdir -p "$LATEST_DIR"
 
-promoted=0
-skipped=0
+# Collect forecast dates touched by this run + already-promoted ones.
+declare -A dates_to_refresh
 for FORECAST_DIR in "$RUN_DIR"/[0-9]*/; do
     [ -d "$FORECAST_DIR" ] || continue
-    FORECAST_DATE=$(basename "$FORECAST_DIR")
-    [[ "$FORECAST_DATE" =~ ^[0-9]{8}$ ]] || continue
+    FDATE=$(basename "$FORECAST_DIR")
+    [[ "$FDATE" =~ ^[0-9]{8}$ ]] || continue
+    dates_to_refresh[$FDATE]=1
+done
 
-    LATEST_LINK="$LATEST_DIR/$FORECAST_DATE"
-    NEW_FILES=$(find "$FORECAST_DIR" -type f 2>/dev/null | wc -l)
+promoted=0
+for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
+    LATEST_DATE_DIR="$LATEST_DIR/$FORECAST_DATE"
 
-    if [ -L "$LATEST_LINK" ]; then
-        CURRENT_TARGET=$(readlink -f "$LATEST_LINK")
-        if [ -d "$CURRENT_TARGET" ]; then
-            CUR_FILES=$(find "$CURRENT_TARGET" -type f 2>/dev/null | wc -l)
-            if [ "$NEW_FILES" -lt "$CUR_FILES" ]; then
-                echo "  Skip $FORECAST_DATE: new run has $NEW_FILES files, current latest has $CUR_FILES"
-                skipped=$((skipped + 1))
-                continue
-            fi
-        fi
+    # Migrate from old per-day-symlink format to per-file-symlink dir.
+    if [ -L "$LATEST_DATE_DIR" ]; then
+        rm -f "$LATEST_DATE_DIR"
     fi
+    mkdir -p "$LATEST_DATE_DIR"
 
-    ln -sfn "../../icon-d2/$RUN_ID/$FORECAST_DATE" "${LATEST_LINK}.tmp"
-    mv -Tf "${LATEST_LINK}.tmp" "$LATEST_LINK"
-    echo "  Promoted $FORECAST_DATE -> $RUN_ID ($NEW_FILES files)"
+    # Wipe stale symlinks (broken or pointing to a removed run).
+    find "$LATEST_DATE_DIR" -maxdepth 1 -type l \! -exec test -e {} \; -delete 2>/dev/null || true
+
+    # Walk runs newest-first, claim files not yet linked.
+    file_count=0
+    for RUN in $(ls -1 "$RESULTS_DIR/icon-d2" 2>/dev/null | grep -E "^[0-9]{8}T[0-9]{2}Z$" | sort -r); do
+        SRC="$RESULTS_DIR/icon-d2/$RUN/$FORECAST_DATE"
+        [ -d "$SRC" ] || continue
+        for f in "$SRC"/*; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            tgt="$LATEST_DATE_DIR/$name"
+            if [ ! -e "$tgt" ] && [ ! -L "$tgt" ]; then
+                ln -sfn "../../icon-d2/$RUN/$FORECAST_DATE/$name" "$tgt"
+                file_count=$((file_count + 1))
+            fi
+        done
+    done
+    echo "  Refreshed latest/$FORECAST_DATE: $file_count file links"
     promoted=$((promoted + 1))
 done
 
-echo "Promoted $promoted forecast dates ($skipped skipped)"
+echo "Promoted $promoted forecast dates"
 
 # Refresh manifest.json (used by the viewer to discover available dates/runs)
 if [ -x "$RESULTS_DIR/scripts/update_manifest.sh" ]; then
