@@ -295,6 +295,7 @@ def select_init_hour(
     requested_init_hour: int | None = None,
     now_utc: datetime | None = None,
     publication_delay_hours: float = 3.0,
+    allow_partial: bool = False,
 ) -> tuple[int, int]:
     """Pick an ICON-D2 init hour whose forecast length covers the target window.
 
@@ -331,10 +332,15 @@ def select_init_hour(
         for h in ICON_D2_VALID_INIT_HOURS:
             required_fh_end = fh_end_base + 24 * effective_start_day - h
             required_fh_start = fh_start_base + 24 * effective_start_day - h
-            # Init must be early enough that the start of the window is reachable
-            # (FH >= 0) and lead time long enough to reach the end.
-            if required_fh_start < 0:
-                continue
+            # In partial mode, init may be after window start (we'll skip the
+            # missing early timesteps); but the init must still produce SOME
+            # output, i.e. fh_end >= 0.
+            if allow_partial:
+                if required_fh_end < 0:
+                    continue
+            else:
+                if required_fh_start < 0:
+                    continue
             if required_fh_end > ICON_D2_MAX_LEAD_HOURS[h]:
                 continue
             # Filter out inits that probably haven't been published yet.

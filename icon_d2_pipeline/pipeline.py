@@ -260,6 +260,13 @@ def run_pipeline(run_date: datetime, init_hour: int, start_day: int,
         utc_hour = local_hour - tz_offset + 24 * start_day
         fh = utc_hour - init_hour
 
+        # Skip timesteps before the run's first forecast hour (partial coverage:
+        # e.g. 12Z run can't produce 07:30 local for "today").
+        fh_lo_check = fh if local_min != 30 else fh
+        if fh_lo_check < 0:
+            logger.info(f"  Skipping {ts_local}: before init (fh={fh_lo_check})")
+            continue
+
         # Determine if we need interpolation (half-hour)
         if local_min == 30:
             # Interpolate between fh (at :00) and fh+1 (at next :00)

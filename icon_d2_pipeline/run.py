@@ -51,6 +51,8 @@ def main():
             sys.exit(1)
 
     auto_init = os.environ.get("AUTO_INIT", "1") not in ("0", "false", "False", "")
+    allow_partial = os.environ.get("ALLOW_PARTIAL", "0") not in ("0", "false", "False", "")
+    publication_delay = float(os.environ.get("PUBLICATION_DELAY_HOURS", "3.0"))
 
     results_dir = Path(os.environ.get("RESULTS_DIR", "/tmp/results"))
     grib_dir_str = os.environ.get("GRIB_DIR", "/tmp/icon_d2_grib")
@@ -86,6 +88,8 @@ def main():
                 start_day=start_day,
                 tz_offset=tz_offset,
                 requested_init_hour=requested_init_hour,
+                publication_delay_hours=publication_delay,
+                allow_partial=allow_partial,
             )
         except ValueError as e:
             logger.error(str(e))
