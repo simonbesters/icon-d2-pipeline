@@ -134,14 +134,16 @@ def main():
         tz_offset=tz_offset,
     )
 
-    # Write a marker so run.sh can find the effective run_id.
+    # Write markers: .last_run_id for run.sh, .complete in the run dir so the
+    # promote step can skip half-finished runs that crashed mid-pipeline.
     if success:
         run_id = f"{run_date.strftime('%Y%m%d')}T{init_hour:02d}Z"
         try:
             (results_dir / "icon-d2").mkdir(parents=True, exist_ok=True)
             (results_dir / "icon-d2" / ".last_run_id").write_text(run_id + "\n")
+            (results_dir / "icon-d2" / run_id / ".complete").write_text("")
         except OSError as e:
-            logger.warning(f"Could not write .last_run_id marker: {e}")
+            logger.warning(f"Could not write run markers: {e}")
 
     if success:
         logger.info("Pipeline completed successfully")

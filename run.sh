@@ -125,8 +125,11 @@ for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
     find "$LATEST_DATE_DIR" -maxdepth 1 -type l \! -exec test -e {} \; -delete 2>/dev/null || true
 
     # Walk runs newest-first, claim files not yet linked.
+    # Only consider runs marked .complete — half-finished runs may contain
+    # files for timesteps the pipeline didn't actually compute correctly.
     file_count=0
     for RUN in $(ls -1 "$RESULTS_DIR/icon-d2" 2>/dev/null | grep -E "^[0-9]{8}T[0-9]{2}Z$" | sort -r); do
+        [ -f "$RESULTS_DIR/icon-d2/$RUN/.complete" ] || continue
         SRC="$RESULTS_DIR/icon-d2/$RUN/$FORECAST_DATE"
         [ -d "$SRC" ] || continue
         for f in "$SRC"/*; do
