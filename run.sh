@@ -16,8 +16,9 @@ TZ_OFFSET="${TZ_OFFSET:-1}"
 RESULTS_DIR="${RESULTS_DIR:-/data/rasp}"
 GRIB_DIR="${GRIB_DIR:-/tmp/icon_d2_grib}"
 
-# Compute deterministic run_id from model init time
-RUN_DATE=$(date -u +%Y%m%d)
+# Compute deterministic run_id from model init time.
+# RUN_DATE can be overridden (YYYYMMDD) for backfills / older inits.
+RUN_DATE="${RUN_DATE:-$(date -u +%Y%m%d)}"
 RUN_ID="${RUN_DATE}T$(printf %02d "$OFFSET_HOUR")Z"
 RUN_DIR="$RESULTS_DIR/icon-d2/$RUN_ID"
 
@@ -49,6 +50,7 @@ docker run --rm \
     -e TZ_OFFSET="$TZ_OFFSET" \
     -e RESULTS_DIR="$RESULTS_DIR" \
     -e GRIB_DIR="$GRIB_DIR" \
+    -e RUN_DATE="$RUN_DATE" \
     icond2-pipeline:latest
 DOCKER_EXIT=$?
 set -e

@@ -58,8 +58,17 @@ def main():
         # Auto-detect from system timezone
         tz_offset = _detect_tz_offset()
 
-    # Use today's date for the model run
-    run_date = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Use today's date for the model run, or RUN_DATE override (YYYYMMDD)
+    # for backfills / reruns of older inits.
+    run_date_str = os.environ.get("RUN_DATE", "")
+    if run_date_str:
+        try:
+            run_date = datetime.strptime(run_date_str, "%Y%m%d")
+        except ValueError:
+            logger.error(f"RUN_DATE must be YYYYMMDD, got '{run_date_str}'")
+            sys.exit(1)
+    else:
+        run_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
     logger.info(f"ICON-D2 Pipeline Starting")
     logger.info(f"  Init hour: {init_hour}Z")
