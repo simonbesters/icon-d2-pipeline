@@ -139,15 +139,29 @@ for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
         RUN_DAY="${RUN:0:8}"
         RUN_HOUR=$((10#${RUN:9:2}))
         MIN_LOCAL_HOUR=$((RUN_HOUR + TZ_OFFSET))
+        # A run is "partial" for this forecast_date when its init falls AFTER
+        # the start of the window (07:00 local). Partial runs compute PFD over
+        # only the timesteps they have, so their aggregate (non-lst) outputs
+        # would underestimate the daily total. Restrict partial runs to
+        # per-timestep files.
+        IS_PARTIAL=false
+        if [ "$FORECAST_DATE" = "$RUN_DAY" ] && [ "$MIN_LOCAL_HOUR" -gt 7 ]; then
+            IS_PARTIAL=true
+        fi
         for f in "$SRC"/*; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
-            # If forecast == init day, filter out timesteps before init.
+            # Same-day pre-init timestep filter (stale junk from old crashes).
             if [ "$FORECAST_DATE" = "$RUN_DAY" ] && [[ "$name" =~ \.([0-9]{2})([0-9]{2})lst\. ]]; then
                 ts_hour=$((10#${BASH_REMATCH[1]}))
                 if [ "$ts_hour" -lt "$MIN_LOCAL_HOUR" ]; then
                     continue
                 fi
+            fi
+            # Aggregate files (no "lst" in name, e.g. pfd_tot.body.png): only
+            # claim from full-window runs.
+            if [ "$IS_PARTIAL" = "true" ] && [[ "$name" != *lst* ]]; then
+                continue
             fi
             tgt="$LATEST_DATE_DIR/$name"
             if [ ! -e "$tgt" ] && [ ! -L "$tgt" ]; then
