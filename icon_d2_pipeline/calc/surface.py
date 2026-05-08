@@ -20,61 +20,56 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
                    qvapor: np.ndarray) -> np.ndarray:
     """Calculate normalized surface solar radiation percentage.
 
-    Computes the ratio of actual incoming solar radiation to the
-    theoretical clear-sky maximum, giving a sunshine percentage (0-100).
+    Ratio of actual incoming SW to theoretical clear-sky max (0-100%).
 
-    Solar geometry matches DrJack's radconst_ routine (solar constant 1370,
-    axial tilt 23.5°, equinox offset day 80). Clear-sky transmittance uses
-    Kasten (1980) with precipitable water correction — DrJack's Fortran uses
-    a column extinction model which is not fully reconstructed.
+    Matches DrJack's calc_sfcsunpct_ + radconst_ Fortran:
+    - Spencer (1971) Fourier expansion for solar declination + Earth-Sun
+      eccentricity correction E0 (±3.4% over the year).
+    - Lacis & Hansen (1974) parameterization for water vapor absorption,
+      with constants 141.5, 0.635, 2.9, 5.925 extracted from .rodata of
+      ncl_jack_fortran.so.
+    - Solar constant 1370 W/m^2.
 
-    Args:
-        swdown: Actual downward shortwave radiation (W/m^2), 2D.
-        jday: Julian day of year.
-        gmthr: GMT hour (decimal).
-        lat: Latitude array (1D or 2D).
-        lon: Longitude array (1D or 2D).
-        ter: Terrain height (lat, lon).
-        z: Heights MSL (level, lat, lon).
-        pmb: Pressure (level, lat, lon) in hPa.
-        tc: Temperature (level, lat, lon) in Celsius.
-        qvapor: Water vapor mixing ratio (level, lat, lon).
-
-    Returns:
-        Sunshine percentage (0-100), same shape as swdown.
-        -999 where sun is below horizon.
+    Returns sunshine percentage (0-100), -999 where sun is below horizon.
     """
-    # Make 2D lat/lon if needed
     if lat.ndim == 1 and lon.ndim == 1:
         lon2d, lat2d = np.meshgrid(lon, lat)
     else:
         lat2d, lon2d = lat, lon
 
-    # Solar declination — DrJack radconst_ constants:
-    # axial tilt = 23.5°, equinox offset = 80 days
-    day_angle = 2.0 * np.pi * (jday - 80) / 365.0
-    declination = 23.5 * np.sin(day_angle)
-    decl_rad = np.radians(declination)
+    # Spencer 1971 day-angle in radians
+    gamma = 2.0 * np.pi * (jday - 1) / 365.0
 
-    # Hour angle (DrJack: 15°/hr from solar noon)
+    # Spencer 1971 solar declination (radians)
+    decl_rad = (0.006918
+                - 0.399912 * np.cos(gamma)
+                + 0.070257 * np.sin(gamma)
+                - 0.006758 * np.cos(2.0 * gamma)
+                + 0.000907 * np.sin(2.0 * gamma)
+                - 0.002697 * np.cos(3.0 * gamma)
+                + 0.001480 * np.sin(3.0 * gamma))
+
+    # Spencer 1971 Earth-Sun distance correction E0 = (r0/r)^2
+    # Constants 0.034221, 1.000110, 0.001280, 0.000719, 0.000077 from .rodata
+    e0 = (1.000110
+          + 0.034221 * np.cos(gamma)
+          + 0.001280 * np.sin(gamma)
+          + 0.000719 * np.cos(2.0 * gamma)
+          + 0.000077 * np.sin(2.0 * gamma))
+
+    # Hour angle (15°/hr from solar noon)
     solar_hour = gmthr + lon2d / 15.0
     hour_angle = np.radians(15.0 * (solar_hour - 12.0))
 
-    # Solar zenith angle
     lat_rad = np.radians(lat2d)
     cos_zenith = (np.sin(lat_rad) * np.sin(decl_rad) +
                   np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_angle))
 
-    # DrJack uses 1e-9 as minimum cosine threshold
     sun_up = cos_zenith > 1e-9
-
-    # Clear-sky radiation — DrJack solar constant = 1370 W/m²
-    solar_constant = 1370.0
     cos_z = np.maximum(cos_zenith, 1e-9)
-    airmass = np.where(sun_up, 1.0 / cos_z, 40.0)
-    airmass = np.minimum(airmass, 40.0)
+    airmass = np.minimum(1.0 / cos_z, 40.0)
 
-    # Compute precipitable water (PW) from qvapor column
+    # Precipitable water (kg/m^2 ~ mm) from qv column
     if qvapor is not None and pmb is not None and z is not None:
         nz_3d = qvapor.shape[0]
         pw = np.zeros_like(ter)
@@ -85,13 +80,17 @@ def calc_sfcsunpct(swdown: np.ndarray, jday: int, gmthr: float,
     else:
         pw = np.full_like(ter, 15.0)
 
-    # Kasten clear-sky transmittance with water vapor correction
-    transmittance = np.exp(-0.09 * airmass ** 0.75 * (1.0 + 0.012 * pw))
+    # Lacis & Hansen 1974 water vapor absorption.
+    # x = scaled PW (cm) along the sun path. Convert PW kg/m^2 -> cm.
+    pw_cm = pw / 10.0
+    x = pw_cm * airmass
+    aw = (2.9 * x) / ((1.0 + 141.5 * x) ** 0.635 + 5.925 * x)
+    transmittance = np.maximum(1.0 - aw, 0.0)
 
-    clear_sky = solar_constant * cos_z * transmittance
+    # Clear-sky direct beam on horizontal: TOA flux * E0 * cos_zenith * transmittance
+    solar_constant = 1370.0
+    clear_sky = solar_constant * e0 * cos_z * transmittance
 
-    # Sunshine percentage = 100 * swdown / clear_sky
-    # -999 where sun is below horizon (DrJack convention: missing value)
     result = np.where(
         ~sun_up, -999.0,
         np.where(clear_sky > 10.0,

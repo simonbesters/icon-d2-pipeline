@@ -84,28 +84,19 @@ def calc_blmax(field_3d: np.ndarray, z: np.ndarray,
 
 def calc_blwinddiff(ua: np.ndarray, va: np.ndarray, z: np.ndarray,
                     ter: np.ndarray, pblh: np.ndarray) -> np.ndarray:
-    """Calculate BL vertical wind shear (speed difference surface to BL top).
+    """Calculate BL vector wind shear (vector difference surface to BL top).
 
-    Args:
-        ua: U-wind component (level, lat, lon), bottom-up, m/s.
-        va: V-wind component (level, lat, lon), bottom-up, m/s.
-        z: Heights MSL (level, lat, lon), bottom-up.
-        ter: Terrain height MSL (lat, lon).
-        pblh: PBL height AGL (lat, lon).
-
-    Returns:
-        Wind shear magnitude (m/s), (lat, lon).
+    Matches DrJack's calc_blwinddiff_ Fortran exactly: vector magnitude
+    sqrt((u_top - u_sfc)^2 + (v_top - v_sfc)^2), NOT scalar
+    |spd_top - spd_sfc|. The two diverge whenever the wind veers/backs
+    through the BL (common at coastal sites with sea breeze).
     """
-    # Surface wind
     u_sfc = ua[0]
     v_sfc = va[0]
-    spd_sfc = np.sqrt(u_sfc**2 + v_sfc**2)
-
-    # BL top wind (interpolate to BL top)
     u_top, v_top = _interp_to_height(ua, va, z, ter + pblh)
-    spd_top = np.sqrt(u_top**2 + v_top**2)
-
-    return np.abs(spd_top - spd_sfc).astype(np.float32)
+    du = u_top - u_sfc
+    dv = v_top - v_sfc
+    return np.sqrt(du * du + dv * dv).astype(np.float32)
 
 
 def calc_bltopwind(ua: np.ndarray, va: np.ndarray, z: np.ndarray,
