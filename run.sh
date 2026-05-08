@@ -127,14 +127,28 @@ for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
     # Walk runs newest-first, claim files not yet linked.
     # Only consider runs marked .complete — half-finished runs may contain
     # files for timesteps the pipeline didn't actually compute correctly.
+    # Additionally, when the forecast_date equals the run's init day, skip
+    # files whose local-time timestep is before the run's init time:
+    # those are stale junk from pre-fix pipeline crashes (e.g. 09Z run
+    # cannot legitimately produce a 07:30 local timestep).
     file_count=0
     for RUN in $(ls -1 "$RESULTS_DIR/icon-d2" 2>/dev/null | grep -E "^[0-9]{8}T[0-9]{2}Z$" | sort -r); do
         [ -f "$RESULTS_DIR/icon-d2/$RUN/.complete" ] || continue
         SRC="$RESULTS_DIR/icon-d2/$RUN/$FORECAST_DATE"
         [ -d "$SRC" ] || continue
+        RUN_DAY="${RUN:0:8}"
+        RUN_HOUR=$((10#${RUN:9:2}))
+        MIN_LOCAL_HOUR=$((RUN_HOUR + TZ_OFFSET))
         for f in "$SRC"/*; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
+            # If forecast == init day, filter out timesteps before init.
+            if [ "$FORECAST_DATE" = "$RUN_DAY" ] && [[ "$name" =~ \.([0-9]{2})([0-9]{2})lst\. ]]; then
+                ts_hour=$((10#${BASH_REMATCH[1]}))
+                if [ "$ts_hour" -lt "$MIN_LOCAL_HOUR" ]; then
+                    continue
+                fi
+            fi
             tgt="$LATEST_DATE_DIR/$name"
             if [ ! -e "$tgt" ] && [ ! -L "$tgt" ]; then
                 ln -sfn "../../icon-d2/$RUN/$FORECAST_DATE/$name" "$tgt"
