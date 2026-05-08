@@ -320,7 +320,8 @@ def select_init_hour(
         now_utc = datetime.utcnow()
     today_midnight_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    base = (18 - tz_offset) + 1  # required FH at init=0Z, start_day=0
+    fh_end_base = (18 - tz_offset) + 1  # FH covering window end (with interp buffer) at init=0Z, sd=0
+    fh_start_base = 7 - tz_offset        # FH covering window start (07:00 local) at init=0Z, sd=0
 
     candidates: list[tuple[int, int]] = []  # (day_offset, init_hour)
     for day_offset in (0, -1):
@@ -328,8 +329,13 @@ def select_init_hour(
         # offset from that init is start_day - day_offset.
         effective_start_day = start_day - day_offset
         for h in ICON_D2_VALID_INIT_HOURS:
-            required_fh = base + 24 * effective_start_day - h
-            if required_fh > ICON_D2_MAX_LEAD_HOURS[h]:
+            required_fh_end = fh_end_base + 24 * effective_start_day - h
+            required_fh_start = fh_start_base + 24 * effective_start_day - h
+            # Init must be early enough that the start of the window is reachable
+            # (FH >= 0) and lead time long enough to reach the end.
+            if required_fh_start < 0:
+                continue
+            if required_fh_end > ICON_D2_MAX_LEAD_HOURS[h]:
                 continue
             # Filter out inits that probably haven't been published yet.
             init_time = today_midnight_utc + timedelta(days=day_offset, hours=h)

@@ -7,8 +7,8 @@ PIPELINE_DIR="/opt/icon-d2-pipeline"
 STATE_DIR="/opt/icon-d2/state"
 mkdir -p "$STATE_DIR"
 
-# Runs to monitor (03Z=45h range, 06Z/09Z/12Z=27h range)
-RUNS="03 06 09 12"
+# All ICON-D2 main runs (every 3h) provide +48h forecasts.
+RUNS="00 03 06 09 12 15 18 21"
 
 DATESTR=$(date -u +%Y%m%d)
 
@@ -16,9 +16,7 @@ for RUN in $RUNS; do
     MARKER="$STATE_DIR/.done-${DATESTR}-${RUN}z"
     [ -f "$MARKER" ] && continue
 
-    # Last forecast step: 03Z=045, others=027
-    LAST_STEP="027"
-    [ "$RUN" = "03" ] && LAST_STEP="045"
+    LAST_STEP="048"
 
     # Check if DWD has finished uploading this run
     URL="https://opendata.dwd.de/weather/nwp/icon-d2/grib/$(printf '%02d' "$RUN")/t_2m/icon-d2_germany_regular-lat-lon_single-level_${DATESTR}$(printf '%02d' "$RUN")_${LAST_STEP}_2d_t_2m.grib2.bz2"
