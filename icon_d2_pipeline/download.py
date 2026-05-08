@@ -293,22 +293,33 @@ def select_init_hour(
     start_day: int,
     tz_offset: int = 1,
     requested_init_hour: int | None = None,
+    now_utc: datetime | None = None,
+    publication_delay_hours: float = 3.0,
 ) -> tuple[int, int]:
     """Pick an ICON-D2 init hour whose forecast length covers the target window.
 
     Args:
         start_day: Forecast day offset (0=today, 1=tomorrow, ...).
         tz_offset: Local UTC offset (1 for CET, 2 for CEST).
-        requested_init_hour: Preferred init hour. If it covers the window, it is
-            returned. Otherwise we fall back to the most recent init that does.
+        requested_init_hour: Preferred init hour. If it covers the window AND is
+            already published, it is returned. Otherwise we fall back to the most
+            recent published init that covers the window.
+        now_utc: Current UTC time (default: datetime.utcnow). Inits whose
+            publication time hasn't passed yet are filtered out.
+        publication_delay_hours: How long after init time DWD typically publishes
+            the full run (default 3h, conservative).
 
     Returns:
         (init_hour, day_offset) where day_offset <= 0 indicates how many days
         before "today" the init lives (0=today, -1=yesterday).
 
     Raises:
-        ValueError: if no init hour from today or yesterday covers the window.
+        ValueError: if no published init from today or yesterday covers the window.
     """
+    if now_utc is None:
+        now_utc = datetime.utcnow()
+    today_midnight_utc = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+
     base = (18 - tz_offset) + 1  # required FH at init=0Z, start_day=0
 
     candidates: list[tuple[int, int]] = []  # (day_offset, init_hour)
@@ -318,8 +329,14 @@ def select_init_hour(
         effective_start_day = start_day - day_offset
         for h in ICON_D2_VALID_INIT_HOURS:
             required_fh = base + 24 * effective_start_day - h
-            if required_fh <= ICON_D2_MAX_LEAD_HOURS[h]:
-                candidates.append((day_offset, h))
+            if required_fh > ICON_D2_MAX_LEAD_HOURS[h]:
+                continue
+            # Filter out inits that probably haven't been published yet.
+            init_time = today_midnight_utc + timedelta(days=day_offset, hours=h)
+            age_hours = (now_utc - init_time).total_seconds() / 3600.0
+            if age_hours < publication_delay_hours:
+                continue
+            candidates.append((day_offset, h))
 
     if not candidates:
         raise ValueError(
