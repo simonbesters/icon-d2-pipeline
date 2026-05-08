@@ -151,7 +151,8 @@ for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
             fi
             tgt="$LATEST_DATE_DIR/$name"
             if [ ! -e "$tgt" ] && [ ! -L "$tgt" ]; then
-                ln -sfn "../../icon-d2/$RUN/$FORECAST_DATE/$name" "$tgt"
+                # Three "../" because symlink lives at latest/icon-d2/$DATE/$name
+                ln -sfn "../../../icon-d2/$RUN/$FORECAST_DATE/$name" "$tgt"
                 file_count=$((file_count + 1))
             fi
         done
