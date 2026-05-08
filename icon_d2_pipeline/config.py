@@ -22,6 +22,13 @@ OUTPUT_BBOX = {
 # DWD open data base URL for ICON-D2
 ICON_D2_BASE_URL = "https://opendata.dwd.de/weather/nwp/icon-d2/grib/"
 
+# Valid ICON-D2 init hours (UTC) and their max forecast lead times (hours).
+# 03Z is the extended run (+45h); all others go to +27h.
+ICON_D2_VALID_INIT_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
+ICON_D2_MAX_LEAD_HOURS = {
+    0: 27, 3: 45, 6: 27, 9: 27, 12: 27, 15: 27, 18: 27, 21: 27,
+}
+
 # ICON-D2 has 65 model levels (66 half-levels for HHL)
 ICON_D2_NUM_LEVELS = 65
 ICON_D2_NUM_HALF_LEVELS = 66

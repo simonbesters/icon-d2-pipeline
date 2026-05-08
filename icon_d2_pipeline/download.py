@@ -15,9 +15,11 @@ from .config import (
     GRIB_INVARIANT_VARS,
     GRIB_PRESSURE_LEVEL_VARS,
     ICON_D2_BASE_URL,
+    ICON_D2_MAX_LEAD_HOURS,
     ICON_D2_NUM_LEVELS,
     ICON_D2_NUM_HALF_LEVELS,
     ICON_D2_PRESSURE_LEVELS_HPA,
+    ICON_D2_VALID_INIT_HOURS,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,3 +278,61 @@ def get_forecast_hours(init_hour: int, start_day: int, tz_offset: int = 1) -> li
 
     # We need one extra hour on each side for interpolation
     return list(range(max(0, fh_start), fh_end + 2))
+
+
+def required_max_forecast_hour(start_day: int, tz_offset: int = 1) -> int:
+    """Return the maximum forecast hour needed to cover the 07:30-18:00 local window
+    for the given start_day, assuming init at 0Z. Caller subtracts init_hour to get
+    the actual max FH for a specific run.
+    """
+    # Local end is 18:00; we need fh_end+1 for interpolation buffer at the tail.
+    return (18 - tz_offset) + 24 * start_day + 1
+
+
+def select_init_hour(
+    start_day: int,
+    tz_offset: int = 1,
+    requested_init_hour: int | None = None,
+) -> tuple[int, int]:
+    """Pick an ICON-D2 init hour whose forecast length covers the target window.
+
+    Args:
+        start_day: Forecast day offset (0=today, 1=tomorrow, ...).
+        tz_offset: Local UTC offset (1 for CET, 2 for CEST).
+        requested_init_hour: Preferred init hour. If it covers the window, it is
+            returned. Otherwise we fall back to the most recent init that does.
+
+    Returns:
+        (init_hour, day_offset) where day_offset <= 0 indicates how many days
+        before "today" the init lives (0=today, -1=yesterday).
+
+    Raises:
+        ValueError: if no init hour from today or yesterday covers the window.
+    """
+    base = (18 - tz_offset) + 1  # required FH at init=0Z, start_day=0
+
+    candidates: list[tuple[int, int]] = []  # (day_offset, init_hour)
+    for day_offset in (0, -1):
+        # If init was on day_offset (relative to today), the effective forecast-day
+        # offset from that init is start_day - day_offset.
+        effective_start_day = start_day - day_offset
+        for h in ICON_D2_VALID_INIT_HOURS:
+            required_fh = base + 24 * effective_start_day - h
+            if required_fh <= ICON_D2_MAX_LEAD_HOURS[h]:
+                candidates.append((day_offset, h))
+
+    if not candidates:
+        raise ValueError(
+            f"No ICON-D2 init hour covers start_day={start_day} (tz_offset={tz_offset}). "
+            f"Maximum lead time is {max(ICON_D2_MAX_LEAD_HOURS.values())}h (03Z run)."
+        )
+
+    if requested_init_hour is not None:
+        for off, h in candidates:
+            if off == 0 and h == requested_init_hour:
+                return (h, 0)
+
+    # Most recent: prefer today over yesterday, then highest hour.
+    candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+    off, h = candidates[0]
+    return (h, off)

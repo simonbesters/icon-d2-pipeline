@@ -14,9 +14,11 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .config import ICON_D2_MAX_LEAD_HOURS, ICON_D2_VALID_INIT_HOURS
+from .download import required_max_forecast_hour, select_init_hour
 from .pipeline import run_pipeline
 
 
@@ -37,10 +39,18 @@ def main():
         logger.error(f"START_DAY must be 0-7, got {start_day}")
         sys.exit(1)
 
-    init_hour = int(os.environ.get("OFFSET_HOUR", "0"))
-    if init_hour not in (0, 3, 6, 9, 12, 15, 18, 21):
-        logger.error(f"OFFSET_HOUR must be a valid init hour (0,3,6,...,21), got {init_hour}")
-        sys.exit(1)
+    offset_hour_env = os.environ.get("OFFSET_HOUR")
+    requested_init_hour: int | None = None
+    if offset_hour_env is not None and offset_hour_env != "":
+        requested_init_hour = int(offset_hour_env)
+        if requested_init_hour not in ICON_D2_VALID_INIT_HOURS:
+            logger.error(
+                f"OFFSET_HOUR must be a valid init hour {ICON_D2_VALID_INIT_HOURS}, "
+                f"got {requested_init_hour}"
+            )
+            sys.exit(1)
+
+    auto_init = os.environ.get("AUTO_INIT", "1") not in ("0", "false", "False", "")
 
     results_dir = Path(os.environ.get("RESULTS_DIR", "/tmp/results"))
     grib_dir_str = os.environ.get("GRIB_DIR", "/tmp/icon_d2_grib")
@@ -70,6 +80,41 @@ def main():
     else:
         run_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    if auto_init:
+        try:
+            init_hour, day_offset = select_init_hour(
+                start_day=start_day,
+                tz_offset=tz_offset,
+                requested_init_hour=requested_init_hour,
+            )
+        except ValueError as e:
+            logger.error(str(e))
+            sys.exit(1)
+        if requested_init_hour is not None and (init_hour != requested_init_hour or day_offset != 0):
+            req_max = ICON_D2_MAX_LEAD_HOURS[requested_init_hour]
+            need = required_max_forecast_hour(start_day, tz_offset) - requested_init_hour
+            logger.warning(
+                f"Requested OFFSET_HOUR={requested_init_hour}Z covers only +{req_max}h, "
+                f"but need +{need}h for START_DAY={start_day}. "
+                f"Falling back to {init_hour:02d}Z (day offset {day_offset})."
+            )
+        # Shift run_date back if we picked a previous-day init; bump start_day so
+        # forecast_dt = run_date + start_day still points at the original target day.
+        run_date = run_date + timedelta(days=day_offset)
+        start_day = start_day - day_offset
+    else:
+        if requested_init_hour is None:
+            logger.error("AUTO_INIT=0 requires OFFSET_HOUR to be set explicitly")
+            sys.exit(1)
+        init_hour = requested_init_hour
+        need = required_max_forecast_hour(start_day, tz_offset) - init_hour
+        if need > ICON_D2_MAX_LEAD_HOURS[init_hour]:
+            logger.error(
+                f"OFFSET_HOUR={init_hour}Z covers only +{ICON_D2_MAX_LEAD_HOURS[init_hour]}h, "
+                f"but START_DAY={start_day} needs +{need}h. Set AUTO_INIT=1 to auto-pick."
+            )
+            sys.exit(1)
+
     logger.info(f"ICON-D2 Pipeline Starting")
     logger.info(f"  Init hour: {init_hour}Z")
     logger.info(f"  Start day: {start_day}")
@@ -84,6 +129,15 @@ def main():
         grib_dir=grib_dir,
         tz_offset=tz_offset,
     )
+
+    # Write a marker so run.sh can find the effective run_id.
+    if success:
+        run_id = f"{run_date.strftime('%Y%m%d')}T{init_hour:02d}Z"
+        try:
+            (results_dir / "icon-d2").mkdir(parents=True, exist_ok=True)
+            (results_dir / "icon-d2" / ".last_run_id").write_text(run_id + "\n")
+        except OSError as e:
+            logger.warning(f"Could not write .last_run_id marker: {e}")
 
     if success:
         logger.info("Pipeline completed successfully")

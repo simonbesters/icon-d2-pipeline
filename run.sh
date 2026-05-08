@@ -2,42 +2,31 @@
 # Run ICON-D2 pipeline and promote results to /data/rasp/latest/.
 #
 # Usage:
-#   ./run.sh                    # Run for today, init 0Z
-#   ./run.sh 6                  # Run for today, init 6Z
-#   START_DAY=1 ./run.sh        # Run for tomorrow
+#   ./run.sh                    # Auto-pick most recent init that covers today
+#   ./run.sh 6                  # Prefer 6Z init (auto-fallback if it can't cover window)
+#   START_DAY=1 ./run.sh        # Run for tomorrow (auto-picks 03Z — only run with +45h)
+#   AUTO_INIT=0 ./run.sh 6      # Strict: fail if 6Z can't cover the window
 #
 # Set UPLOAD_TARGET to auto-upload after run (for remote setups).
 
 set -euo pipefail
 
 START_DAY="${START_DAY:-0}"
-OFFSET_HOUR="${1:-0}"
+OFFSET_HOUR="${1:-${OFFSET_HOUR:-}}"
+AUTO_INIT="${AUTO_INIT:-1}"
 TZ_OFFSET="${TZ_OFFSET:-1}"
 RESULTS_DIR="${RESULTS_DIR:-/data/rasp}"
 GRIB_DIR="${GRIB_DIR:-/tmp/icon_d2_grib}"
 
-# Compute deterministic run_id from model init time.
 # RUN_DATE can be overridden (YYYYMMDD) for backfills / older inits.
 RUN_DATE="${RUN_DATE:-$(date -u +%Y%m%d)}"
-RUN_ID="${RUN_DATE}T$(printf %02d "$OFFSET_HOUR")Z"
-RUN_DIR="$RESULTS_DIR/icon-d2/$RUN_ID"
 
 echo "=== ICON-D2 Pipeline ==="
-echo "  Run ID:     $RUN_ID"
-echo "  Init hour:  ${OFFSET_HOUR}Z"
-echo "  Start day:  $START_DAY"
-echo "  TZ offset:  $TZ_OFFSET"
-echo "  Output dir: $RUN_DIR"
-
-# Clean up GRIB files from previous runs (keep only current run)
-CURRENT_PREFIX="icon-d2_${RUN_DATE}$(printf %02d "$OFFSET_HOUR")"
-if [ -d "$GRIB_DIR" ]; then
-    OLD_COUNT=$(find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" 2>/dev/null | wc -l)
-    if [ "$OLD_COUNT" -gt 0 ]; then
-        echo "  Cleaning $OLD_COUNT old GRIB files from $GRIB_DIR..."
-        find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" -delete
-    fi
-fi
+echo "  Requested init: ${OFFSET_HOUR:-auto}"
+echo "  Run date:       $RUN_DATE"
+echo "  Start day:      $START_DAY"
+echo "  TZ offset:      $TZ_OFFSET"
+echo "  Auto init:      $AUTO_INIT"
 
 set +e
 docker run --rm \
@@ -47,6 +36,7 @@ docker run --rm \
     -v /root/icon-d2-pipeline/icon_d2_pipeline:/app/icon_d2_pipeline \
     -e START_DAY="$START_DAY" \
     -e OFFSET_HOUR="$OFFSET_HOUR" \
+    -e AUTO_INIT="$AUTO_INIT" \
     -e TZ_OFFSET="$TZ_OFFSET" \
     -e RESULTS_DIR="$RESULTS_DIR" \
     -e GRIB_DIR="$GRIB_DIR" \
@@ -66,10 +56,33 @@ if [ "$DOCKER_EXIT" -eq 139 ]; then
     echo "Note: container exited 139 (SIGSEGV during shutdown); output verified below"
 fi
 
+# Read effective run_id chosen by pipeline (may differ from requested due to auto-fallback)
+MARKER="$RESULTS_DIR/icon-d2/.last_run_id"
+if [ ! -f "$MARKER" ]; then
+    echo "ERROR: Pipeline did not write $MARKER"
+    exit 1
+fi
+RUN_ID=$(cat "$MARKER")
+RUN_DIR="$RESULTS_DIR/icon-d2/$RUN_ID"
+echo "  Effective run:  $RUN_ID"
+
 # Verify output
 if [ ! -d "$RUN_DIR" ]; then
     echo "ERROR: Output directory not found: $RUN_DIR"
     exit 1
+fi
+
+# Clean up GRIB files from previous runs (keep only the effective run's files).
+# Doing this AFTER the run lets us use the auto-selected effective run_id;
+# for the current run, the prefix matches what we just downloaded so nothing
+# we still need is deleted.
+CURRENT_PREFIX="icon-d2_${RUN_ID:0:8}${RUN_ID:9:2}"
+if [ -d "$GRIB_DIR" ]; then
+    OLD_COUNT=$(find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" 2>/dev/null | wc -l)
+    if [ "$OLD_COUNT" -gt 0 ]; then
+        echo "  Cleaning $OLD_COUNT old GRIB files from $GRIB_DIR..."
+        find "$GRIB_DIR" -name "icon-d2_*.grib2" \! -name "${CURRENT_PREFIX}_*" -delete
+    fi
 fi
 
 echo ""
