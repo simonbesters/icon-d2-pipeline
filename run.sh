@@ -41,6 +41,8 @@ docker run --rm \
     -e RESULTS_DIR="$RESULTS_DIR" \
     -e GRIB_DIR="$GRIB_DIR" \
     -e RUN_DATE="$RUN_DATE" \
+    -e ALLOW_PARTIAL="${ALLOW_PARTIAL:-}" \
+    -e PUBLICATION_DELAY_HOURS="${PUBLICATION_DELAY_HOURS:-}" \
     icond2-pipeline:latest
 DOCKER_EXIT=$?
 set -e
@@ -121,8 +123,10 @@ for FORECAST_DATE in "${!dates_to_refresh[@]}"; do
     fi
     mkdir -p "$LATEST_DATE_DIR"
 
-    # Wipe stale symlinks (broken or pointing to a removed run).
-    find "$LATEST_DATE_DIR" -maxdepth 1 -type l \! -exec test -e {} \; -delete 2>/dev/null || true
+    # Wipe ALL existing symlinks so the newest-run-wins walk below can re-claim
+    # files that were previously claimed by older runs. Without this a newer
+    # run finds every target already exists and adds zero new links.
+    find "$LATEST_DATE_DIR" -maxdepth 1 -type l -delete 2>/dev/null || true
 
     # Walk runs newest-first, claim files not yet linked.
     # Only consider runs marked .complete — half-finished runs may contain
